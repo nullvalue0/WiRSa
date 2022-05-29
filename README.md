@@ -1,7 +1,11 @@
 # WiRSa
 This project is a Wifi - RS232 Serial adapter for getting vintage computers connected to the internet (telnet or http). At it's heart is a Wemos ESP8266 wifi-enabled controller. This project differs from other Wifi Serial adapters in that it adds a micro-SD card module for reading and writing data. The intended use case is for people who have a vintage computer but have no ability (or desire) to create floppies, and doesn't want to modify the computer (by installing a permantent floppy emulation solution something like a Gotek). 
 
-If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale on eBay here: https://www.ebay.com/itm/175299622202 
+## Some assembled units available for sale
+If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale on my eBay store here: https://www.ebay.com/itm/175299622202 
+
+## History
+This began as a device I built for the filming of Apple TV's "The Shining Girls". There were a number of scenes involving computer terminals. They had the terminals but no idea how to display anything on them. I came up with this device as a means to display a static block of text at the terminal or "playback" a text file - ie: when the actor hits a key on the keyboard, regardless of what key is pressed - the next character from the text file gets printed. This creates the illusion that the actor is actually typing the document in real-time but they're really just mashing keys. 
 
 ## Firmware
 The firmware is based on "WiFi SIXFOUR" (https://github.com/thErZAgH/c64modem), which in turn was based on the "Virtual modem for ESP8266" (https://github.com/jsalin/esp8266_modem). The firmware has 3 main functions:  1. MODEM mode, for telnet/BBS use.  2. Text Playback mode, for reading and printing text files from the SD card over the serial line. 3. File Transfer mode which offers the ability to send and receive data from the SD card with the host computer (so long as the host computer is running a terminal software which supports file transfer).  Currently only the file transfer protocol YMODEM is supported. There are plans to also implement XMODEM,  YMODEM Batch, ZMODEM and KERMIT.
