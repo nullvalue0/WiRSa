@@ -89,7 +89,7 @@
 #define MODE_PLAYBACK 3
 
 // Global variables
-String build = "20160621182048";
+String build = "20220822982048";
 String cmd = "";           // Gather a new AT command to this string from serial
 bool cmdMode = true;       // Are we in AT command mode or connected mode
 bool callConnected = false;// Are we currently in a call
@@ -1974,7 +1974,7 @@ void playbackLoop()
     String filename = getLine();
     if (filename!="") {
       if (displayFile(filename, false, 0))
-        getKey();
+        waitKey(27,96);
       Serial.println("");
       playbackMenu();
     }
@@ -1986,7 +1986,7 @@ void playbackLoop()
       Serial.print("Begin at Position: ");
       String pos = getLine();
       if (displayFile(filename, true, pos.toInt()))
-        waitKey(27);
+        waitKey(27,96);
       Serial.println("");
       playbackMenu();
     }
@@ -2272,7 +2272,7 @@ bool displayFile(String filename, bool playback_mode, int begin_position)
       if (playback_mode && pos>begin_position)
       {
         char c = getKey();
-        if (c==27)
+        if (c==27||c==96)
         {
           myFile.close();
           return false;
@@ -2283,7 +2283,26 @@ bool displayFile(String filename, bool playback_mode, int begin_position)
           return displayFile(filename, playback_mode, begin_position);
         }
       }
-      Serial.write(myFile.read());
+      char chr = myFile.read();
+      if (chr=='^') //VT escape code
+        Serial.print((char)27);
+      else if (chr=='`') //Playback escape code
+      {
+        chr = myFile.read(); //get the next char
+        if (chr=='P') //continue playback
+          playback_mode=false;
+        else if (chr=='W') //wait for any key (pause playback)
+          playback_mode=true;
+        else if (chr=='D') //delay 1 second
+          delay(1000);
+        else if (chr=='E') //wait for enter key
+        {
+          waitKey(10,13);
+          playback_mode=false;
+        }
+      }
+      else
+        Serial.write(chr);
       pos++;
     }
     // close the file:
@@ -2313,14 +2332,14 @@ char getKey()
   }
 }
 
-char waitKey(int key)
+char waitKey(int key1, int key2)
 {
   while (true)
   {
     if (Serial.available() > 0)
     {
       char c = Serial.read();
-      if (c == key)
+      if (c == key1 || c == key2)
         break;
     }
   }
