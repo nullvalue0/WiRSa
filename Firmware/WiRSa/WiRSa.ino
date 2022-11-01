@@ -1,10 +1,9 @@
-/*
+/**************************************************************************
    RetroDisks WiRSa - Wifi RS232 Serial Modem Adapter with File Transfer features
    Copyright (C) 2022 Aron Hoekstra <nullvalue@gmail.com>
 
    based on:
      ESP8266 based virtual modem
-     Copyright (C) 2016 Jussi Salin <salinjus@gmail.com>
      https://github.com/jsalin/esp8266_modem
    
    and the improvements added by:
@@ -28,7 +27,17 @@
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
-*/
+ **************************************************************************
+ This software uses libraries published by Adafruit for LCD screen control
+ Adafruit_SSD1306 & Adafruit_GFX. 
+ **************************************************************************
+ This software uses the LinkedList library by Ivan Seidel
+ http://github.com/ivanseidel/LinkedList
+ **************************************************************************
+ This software uses the arduino-timer libary by 
+ https://github.com/contrem/arduino-timer
+ **************************************************************************/
+ 
 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -36,6 +45,10 @@
 #include <ESP8266mDNS.h>
 #include <LinkedList.h>
 #include <SPI.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include "SD.h"
 #include "CRC16.h"
 #include "CRC.h"
@@ -68,52 +81,84 @@
 #define DIAL2_ADDRESS   300
 #define DIAL3_ADDRESS   350
 #define DIAL4_ADDRESS   400
-#define DIAL5_ADDRESS   450
+#define DIAL5_ADDRESS   450 
 #define DIAL6_ADDRESS   500
 #define DIAL7_ADDRESS   550
 #define DIAL8_ADDRESS   600
 #define DIAL9_ADDRESS   650
 #define BUSY_MSG_ADDRESS 700
 #define BUSY_MSG_LEN    80
-#define LAST_ADDRESS    780
+#define ORIENTATION_ADDRESS 780
+#define LAST_ADDRESS    800
 
 #define SWITCH_PIN 0       // GPIO0 (programmind mode pin)
-#define LED_PIN 12          // Status LED
+#define LED_PIN LED_BUILTIN          // Status LED
 #define DCD_PIN 2          // DCD Carrier Status
 #define RTS_PIN 4         // RTS Request to Send, connect to host's CTS pin
 #define CTS_PIN 5         // CTS Clear to Send, connect to host's RTS pin
+
+#define SW1_PIN A0
+#define SW2_PIN D0
+#define SW3_PIN D3
+#define SW4_PIN D4
 
 #define MODE_MAIN 0
 #define MODE_MODEM 1
 #define MODE_FILE 2
 #define MODE_PLAYBACK 3
+#define MODE_SETTINGS 4
+#define MODE_SETBAUD 5
+#define MODE_LISTFILE 6
+#define MODE_ORIENTATION 7
+
+#define MENU_BOTH 0 //show menu on both serial port & display using first letter as selector
+#define MENU_NUM  1 //show menu on both serial port & display but serial uses a numeric selector
+#define MENU_DISP 2 //show menu on display only
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
 
 // Global variables
-String build = "20220822982048";
-String cmd = "";           // Gather a new AT command to this string from serial
-bool cmdMode = true;       // Are we in AT command mode or connected mode
-bool callConnected = false;// Are we currently in a call
-bool telnet = false;       // Is telnet control code handling enabled
+String build = "202210310817";
+String cmd = "";              // Gather a new AT command to this string from serial
+bool cmdMode = true;          // Are we in AT command mode or connected mode
+bool callConnected = false;   // Are we currently in a call
+bool telnet = false;          // Is telnet control code handling enabled
 bool verboseResults = false;
-//#define DEBUG 1          // Print additional debug information to serial channel
+//#define DEBUG 1             // Print additional debug information to serial channel
 #undef DEBUG
-#define LISTEN_PORT 6400   // Listen to this if not connected. Set to zero to disable.
+#define LISTEN_PORT 6400      // Listen to this if not connected. Set to zero to disable.
 int tcpServerPort = LISTEN_PORT;
-#define RING_INTERVAL 3000 // How often to print RING when having a new incoming connection (ms)
+#define RING_INTERVAL 3000    // How often to print RING when having a new incoming connection (ms)
 unsigned long lastRingMs = 0; // Time of last "RING" message (millis())
-//long myBps;                // What is the current BPS setting
-#define MAX_CMD_LENGTH 256 // Maximum length for AT command
-char plusCount = 0;        // Go to AT mode at "+++" sequence, that has to be counted
-unsigned long plusTime = 0;// When did we last receive a "+++" sequence
-#define LED_TIME 15         // How many ms to keep LED on at activity
+//long myBps;                 // What is the current BPS setting
+#define MAX_CMD_LENGTH 256    // Maximum length for AT command
+char plusCount = 0;           // Go to AT mode at "+++" sequence, that has to be counted
+unsigned long plusTime = 0;   // When did we last receive a "+++" sequence
+#define LED_TIME 15           // How many ms to keep LED on at activity
 unsigned long ledTime = 0;
-#define TX_BUF_SIZE 256    // Buffer where to read from serial before writing to TCP
+#define TX_BUF_SIZE 256       // Buffer where to read from serial before writing to TCP
 // (that direction is very blocking by the ESP TCP stack,
 // so we can't do one byte a time.)
 uint8_t txBuf[TX_BUF_SIZE];
 const int speedDialAddresses[] = { DIAL0_ADDRESS, DIAL1_ADDRESS, DIAL2_ADDRESS, DIAL3_ADDRESS, DIAL4_ADDRESS, DIAL5_ADDRESS, DIAL6_ADDRESS, DIAL7_ADDRESS, DIAL8_ADDRESS, DIAL9_ADDRESS };
 String speedDials[10];
 const int bauds[] = { 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 };
+String baudDisp[] = { "300", "1200", "2400", "4800", "9600", "19.2k", "38.4k", "57.6k", "115k" };
+String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Playback Text", "Settings" };
+String settingsMenuDisp[] = { String("\xAE") + String("BACK"), "Baud Rate", "Screen", "Factory Reset", "Reboot" };
+String orientationMenuDisp[] = { "Normal", "Flipped" };
+String playbackMenuDisp[] = { String("\xAE") + String("BACK"), "List Files", "Display File", "Playback File", "Evaluate Key", "Terminal Mode" };
+String fileMenuDisp[] = { String("\xAE") + String("BACK"), 
+                          //"Upload YM - to SD)", 
+                          //"Download YM-from SD", 
+                          "List Files on SD", 
+                          "Send (from SD)", 
+                          "Recieve (to SD)" };
 byte serialspeed;
 bool echo = true;
 bool autoAnswer = false;
@@ -129,8 +174,15 @@ byte flowControl = F_NONE;      // Use flow control
 bool txPaused = false;          // Has flow control asked us to pause?
 enum pinPolarity_t { P_INVERTED, P_NORMAL }; // Is LOW (0) or HIGH (1) active?
 byte pinPolarity = P_INVERTED;
+enum dispOrientation_t { D_NORMAL, D_FLIPPED }; // Is LOW (0) or HIGH (1) active?
+byte dispOrientation = D_NORMAL;
 
 int menuMode = MODE_MAIN;
+int lastMenu = -1;
+int menuCnt = 0;
+int menuIdx = 0;
+int dispCharCnt = 0;
+int dispLineCnt = 0;
 
 //file transfer related variables
 const int chipSelect = D8;
@@ -149,6 +201,13 @@ bool EscapeTelnet = false;
 CRC16 crc;
 auto timer = timer_create_default();
 String terminalMode = "VT100";
+String fileName = "";
+String files[100];
+bool msgFlag=false;
+bool SW1=false;
+bool SW2=false;
+bool SW3=false;
+bool SW4=false;
 
 // Telnet codes
 #define DO 0xfd
@@ -160,6 +219,8 @@ WiFiClient tcpClient;
 WiFiServer tcpServer(tcpServerPort);
 ESP8266WebServer webServer(80);
 MDNSResponder mdns;
+
+void(* resetFunc) (void) = 0; //declare reset function @ address 0
 
 String connectTimeString() {
   unsigned long now = millis();
@@ -193,7 +254,8 @@ void writeSettings() {
   EEPROM.write(PET_TRANSLATE_ADDRESS, byte(petTranslate));
   EEPROM.write(FLOW_CONTROL_ADDRESS, byte(flowControl));
   EEPROM.write(PIN_POLARITY_ADDRESS, byte(pinPolarity));
-
+  EEPROM.write(ORIENTATION_ADDRESS, byte(dispOrientation));
+  
   for (int i = 0; i < 10; i++) {
     setEEPROM(speedDials[i], speedDialAddresses[i], 50);
   }
@@ -214,6 +276,7 @@ void readSettings() {
   petTranslate = EEPROM.read(PET_TRANSLATE_ADDRESS);
   flowControl = EEPROM.read(FLOW_CONTROL_ADDRESS);
   pinPolarity = EEPROM.read(PIN_POLARITY_ADDRESS);
+  dispOrientation = EEPROM.read(ORIENTATION_ADDRESS);
 
   for (int i = 0; i < 10; i++) {
     speedDials[i] = getEEPROM(speedDialAddresses[i], 50);
@@ -230,7 +293,7 @@ void defaultEEPROM() {
   EEPROM.write(SERVER_PORT_ADDRESS, highByte(LISTEN_PORT));
   EEPROM.write(SERVER_PORT_ADDRESS + 1, lowByte(LISTEN_PORT));
 
-  EEPROM.write(BAUD_ADDRESS, 0x00);
+  EEPROM.write(BAUD_ADDRESS, 0x04);
   EEPROM.write(ECHO_ADDRESS, 0x01);
   EEPROM.write(AUTO_ANSWER_ADDRESS, 0x01);
   EEPROM.write(TELNET_ADDRESS, 0x00);
@@ -244,13 +307,15 @@ void defaultEEPROM() {
   setEEPROM("borderlinebbs.dyndns.org:6400", speedDialAddresses[2], 50);
   setEEPROM("particlesbbs.dyndns.org:6400", speedDialAddresses[3], 50);
   setEEPROM("reflections.servebbs.com:23", speedDialAddresses[4], 50);
-  setEEPROM("heatwavebbs.com:9640", speedDialAddresses[5], 50);
-
-  for (int i = 5; i < 10; i++) {
-    setEEPROM("", speedDialAddresses[i], 50);
-  }
-
+  setEEPROM("heatwave.ddns.net:9640", speedDialAddresses[5], 50);
+  setEEPROM("bat.org:23", speedDialAddresses[6], 50);
+  setEEPROM("blackflag.acid.org:23", speedDialAddresses[7], 50);
+  setEEPROM("cavebbs.homeip.net:23", speedDialAddresses[8], 50);
+  setEEPROM("vert.synchro.net:23", speedDialAddresses[9], 50);
+  
   setEEPROM("SORRY, SYSTEM IS CURRENTLY BUSY. PLEASE TRY AGAIN LATER.", BUSY_MSG_ADDRESS, BUSY_MSG_LEN);
+
+  EEPROM.write(ORIENTATION_ADDRESS, 0x00);
   EEPROM.commit();
 }
 
@@ -335,10 +400,12 @@ int checkButton() {
 void connectWiFi() {
   if (ssid == "" || password == "") {
     Serial.println("CONFIGURE SSID AND PASSWORD. TYPE AT? FOR HELP.");
+    showMessage("CONFIGURE SSID\nAND PASSWORD\nOVER SERIAL");
     return;
   }
   WiFi.begin(ssid.c_str(), password.c_str());
   Serial.print("\nCONNECTING TO SSID "); Serial.print(ssid);
+  showMessage("* PLEASE WAIT *\n CONNECTING TO\n" + ssid);
   uint8_t i = 0;
   while (WiFi.status() != WL_CONNECTED && i++ < 20) {
     digitalWrite(LED_PIN, LOW);
@@ -356,6 +423,7 @@ void connectWiFi() {
     Serial.print("CONNECTED TO "); Serial.println(WiFi.SSID());
     Serial.print("IP ADDRESS: "); Serial.println(WiFi.localIP());
     updateLed();
+    modemMenu();
   }
 }
 
@@ -502,6 +570,7 @@ void displayCurrentSettings() {
   Serial.print("NET"); Serial.print(telnet); Serial.print(" "); yield();
   Serial.print("PET"); Serial.print(petTranslate); Serial.print(" "); yield();
   Serial.print("S0:"); Serial.print(autoAnswer); Serial.print(" "); yield();
+  Serial.print("ORIENT:"); Serial.print(dispOrientation); Serial.print(" "); yield();
   Serial.println(); yield();
 
   Serial.println("SPEED DIAL:");
@@ -526,6 +595,7 @@ void displayStoredSettings() {
   Serial.print("NET"); Serial.print(EEPROM.read(TELNET_ADDRESS)); Serial.print(" "); yield();
   Serial.print("PET"); Serial.print(EEPROM.read(PET_TRANSLATE_ADDRESS)); Serial.print(" "); yield();
   Serial.print("S0:"); Serial.print(EEPROM.read(AUTO_ANSWER_ADDRESS)); Serial.print(" "); yield();
+  Serial.print("ORIENT:"); Serial.print(EEPROM.read(ORIENTATION_ADDRESS)); Serial.print(" "); yield();
   Serial.println(); yield();
 
   Serial.println("STORED SPEED DIAL:");
@@ -565,7 +635,7 @@ void waitForEnter() {
 }
 
 void displayHelp() {
-  mainMenu();
+  //mainMenu();
   Serial.println("AT COMMAND SUMMARY:"); yield();
   Serial.println("DIAL HOST......: ATDTHOST:PORT"); yield();
   Serial.println("SPEED DIAL.....: ATDSN (N=0-9)"); yield();
@@ -604,30 +674,173 @@ void storeSpeedDial(byte num, String location) {
   //Serial.print("STORED "); Serial.print(num); Serial.print(": "); Serial.println(location);
 }
 
+
+String padLeft(String s, int len) {
+  while (s.length()<len)
+  {
+    s = " " + s;
+  }
+  return s;
+}
+
 void mainMenu() {
-  Serial.println();
-  Serial.println();
-  Serial.println("-= RetroDisks  WiRSa =-");
-  Serial.println("-=-=-  MAIN MENU  -=-=-");
-  Serial.println(" [M]ODEM Mode");
-  Serial.println(" [F]ile Transfer");
-  Serial.println(" [P]layback Text");
-  Serial.println();
-  Serial.print("> ");
+  menuMode=MODE_MAIN;
+  showMenu("MAIN", mainMenuDisp, 4, MENU_BOTH);
+}
+
+void showHeader(String menu, int dispMode) {
+  if (dispMode!=MENU_DISP) {
+    Serial.println();
+    Serial.println();
+    Serial.println("-=-=- " + menu + " MENU -=-=-");
+  }
+  
+  //21 chars wide x 8 lines);
+  if (lastMenu != menuMode || msgFlag)
+  { //clear the whole display, reset the selction
+    msgFlag=false;
+    display.clearDisplay();
+    menuIdx=0;
+    lastMenu=menuMode;
+    display.drawLine(0,0,0,63,SSD1306_WHITE);
+    display.drawLine(127,0,127,63,SSD1306_WHITE);
+    display.drawLine(0,63,127,63,SSD1306_WHITE);
+  } else {
+    //just clear the selection area
+    display.fillRect(6, 8, 8, 52, SSD1306_BLACK);
+  }
+ 
+  display.fillRect(0, 0, 127, 9, SSD1306_WHITE);
+  display.setCursor(1, 1);     // Start at top-left corner
+  display.setTextColor(SSD1306_BLACK); // Draw white text
+  String line = "WiRSa " + menu;
+  display.print(line);  
+  String bps = baudDisp[serialspeed];
+  display.println(padLeft(bps,21-line.length()));
+  display.setTextColor(SSD1306_WHITE); // Draw white text
+  display.setCursor(0, 13);     // Start at top-left corner
+  display.display();
+}
+
+void showMessage(String message) {
+  display.fillRect(1, 10, 125, 53, SSD1306_BLACK);
+  display.drawRect(16, 12, 97, 40, SSD1306_WHITE);
+  display.fillRect(18, 14, 93, 36, SSD1306_WHITE);
+  int x = 20;
+  int y = 16;
+  int c= 0;
+  display.setCursor(x,y);
+  display.setTextColor(SSD1306_BLACK);
+  
+  for (int i = 0; i < message.length(); i++) {
+    if (message[i] == '\n') {
+      x = 20; y += 8; c = 0;
+      display.setCursor(x, y);
+    } else if (c == 15) {
+      x = 20; y += 8; c = 0;
+      display.setCursor(x, y);
+      display.write(message[i]);
+    } else {
+      display.write(message[i]);
+      c++;
+    }
+  }
+  display.setTextColor(SSD1306_WHITE);
+  display.display();
+  msgFlag=true;
+}
+
+void showMenu(String menuName, String options[], int sz, int dispMode) {
+  showHeader(menuName, dispMode);
+  
+  menuCnt = sz;
+
+  int menuStart=0;
+  int menuEnd=0;
+
+  if (menuCnt<=6)
+    menuEnd=menuCnt;
+  else {
+    //clear out menu area
+    display.fillRect(2, 9, 123, 54, SSD1306_BLACK);
+    
+    menuStart=menuIdx;
+    if (menuIdx<6)
+      menuStart=0;
+    else
+      menuStart=menuIdx-5;
+    
+    menuEnd=menuStart+6;
+    if (menuEnd>menuCnt)
+      menuEnd=menuCnt; 
+  }
+  
+  for (int i=menuStart;i<menuEnd;i++) {
+    menuOption(i, options[i]);
+  }
+
+  if (dispMode!=MENU_DISP) {
+    for (int i=0;i<menuCnt;i++) {
+      if (menuMode==MENU_NUM)
+        Serial.println(" [" + String(i) + "] " + options[i]);
+      else //MENU_BOTH
+        Serial.println(" [" + options[i].substring(0,1) + "]" + options[i].substring(1));
+    }
+  }
+  
+  if (menuStart>0) {
+    display.setCursor(120, 13);
+    display.write(0x1E);
+  }
+
+  if (menuEnd<menuCnt) {
+    display.setCursor(120, 54);
+    display.write(0x1F);
+  }
+
+  display.display();
+
+  if (dispMode!=MENU_DISP) {
+    Serial.println();
+    Serial.print("> ");
+  }
+}
+
+void menuOption(int idx, String item) {
+  display.print(" ");
+  if (menuIdx==idx)
+    display.write(16);
+  else
+    display.print(" ");
+  display.print(" ");
+  display.println(item.substring(0,17));
 }
 
 /**
    Arduino main init function
 */
 void setup() {
+  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;); // Don't proceed, loop forever
+  }
+  display.display();
+  display.setTextSize(1);      // Normal 1:1 pixel scale
+  display.setTextColor(SSD1306_WHITE); // Draw white text
+  display.cp437(true);         // Use full 256 char 'Code Page 437' font
+  delay(2000); // Pause for 2 seconds
+  display.clearDisplay();
+  display.setCursor(0, 0);     // Start at top-left corner
+  
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH); // off
   pinMode(SWITCH_PIN, INPUT);
   digitalWrite(SWITCH_PIN, HIGH);
-  pinMode(DCD_PIN, OUTPUT);
-  pinMode(RTS_PIN, OUTPUT);
-  digitalWrite(RTS_PIN, HIGH); // ready to receive data
-  pinMode(CTS_PIN, INPUT);
+  //pinMode(DCD_PIN, OUTPUT);
+  //pinMode(RTS_PIN, OUTPUT);
+  //digitalWrite(RTS_PIN, HIGH); // ready to receive data
+  //pinMode(CTS_PIN, INPUT);
   //digitalWrite(CTS_PIN, HIGH); // pull up
   setCarrier(false);
 
@@ -646,22 +859,18 @@ void setup() {
     serialspeed = 0;
   }
 
+  if (dispOrientation==D_NORMAL)
+    display.setRotation(0);
+  else
+    display.setRotation(2);
+
+  
   Serial.begin(bauds[serialspeed]);
-
-  char c;
-  while (c != 0x0a && c != 0x0d) {
-    if (Serial.available() > 0) {
-      c = Serial.read();
-      if (petTranslate == true){
-        if (c > 127) c-= 128;
-      }
-    }
-    if (checkButton() == 1) {
-      break; // button pressed, we're setting to 300 baud and moving on
-    }
-    yield();
-  }
-
+  pinMode(SW1_PIN, INPUT);
+  pinMode(SW2_PIN, INPUT);
+  pinMode(SW3_PIN, INPUT);
+  pinMode(SW4_PIN, INPUT);
+  Serial.println("-= RetroDisks  WiRSa =-");
   mainMenu();
 }
 
@@ -756,6 +965,49 @@ void led_on()
   ledTime = millis();
 }
 
+void readSwitches()
+{ //these digital pins are pulled HIGH, pushed=LOW
+  if (dispOrientation==D_NORMAL) {
+    SW1 = (analogRead(A0) < 100); //must read a0 as an analog, < 100 = pushed
+    SW2 = !digitalRead(D0); 
+  } else {
+    SW2 = (analogRead(A0) < 100); //must read a0 as an analog, < 100 = pushed
+    SW1 = !digitalRead(D0);     
+  }
+  SW3 = !digitalRead(D3);
+  SW4 = !digitalRead(D4); 
+}
+
+void readBackSwitch()
+{ //not sure why but when in a call, SW1 analog read hangs the connection
+  //only concerned about 'back' button push anyways, hence this function
+  SW1 = LOW; //must read a0 as an analog, < 100 = pushed
+  SW2 = LOW; 
+  SW3 = LOW;
+  SW4 = !digitalRead(D4); 
+}
+
+void waitSwitches()
+{
+  //wait for all switches to be released
+  for (int i=0;i<10;i++) {
+    while(SW1||SW2||SW3||SW4) {
+      delay(10);
+      readSwitches();
+    }
+  }
+}
+
+void waitBackSwitch()
+{
+  //wait for all switches to be released
+  for (int i=0;i<10;i++) {
+    while(SW1||SW2||SW3||SW4) {
+      delay(10);
+      readBackSwitch();
+    }
+  }
+}
 void answerCall() {
   tcpClient = tcpServer.available();
   tcpClient.setNoDelay(true); // try to disable naggle
@@ -857,6 +1109,9 @@ void dialOut(String upCmd) {
     Serial.flush();
     callConnected = true;
     setCarrier(callConnected);
+    display.clearDisplay();
+    display.setCursor(1, 1); 
+    display.display();
     //if (tcpServerPort > 0) tcpServer.stop();
   }
   else
@@ -1179,7 +1434,6 @@ void command()
   }
 
   else if (upCmd == "ATX") {
-    menuMode=MODE_MAIN;
     mainMenu();
   }
 
@@ -1296,17 +1550,48 @@ void loop()
     fileLoop();
   else if (menuMode==MODE_PLAYBACK)
     playbackLoop();
+  else if (menuMode==MODE_SETTINGS)
+    settingsLoop();
+  else if (menuMode==MODE_SETBAUD)
+    baudLoop();    
+  else if (menuMode==MODE_LISTFILE)
+    listFilesLoop();
+  else if (menuMode==MODE_ORIENTATION)
+    orientationLoop();
 }
 
 void mainLoop()
 {
-    if (Serial.available())
+    int menuSel=-1;
+    readSwitches();
+    if (SW1) {  //UP
+        menuIdx--;
+        if (menuIdx<0)
+          menuIdx=menuCnt-1;
+        mainMenu();
+    }
+    else if (SW2) { //DOWN
+      menuIdx++;
+      if (menuIdx>(menuCnt-1))
+        menuIdx=0;
+      mainMenu();
+    }
+    else if (SW3) { //ENTER
+      menuSel = menuIdx;
+    }
+    else if (SW4) { //BACK
+    }
+    waitSwitches();
+    
+    if (Serial.available() || menuSel>-1)
     {
       char chr = Serial.read();
       Serial.print(chr);
-      if (chr=='M'||chr=='m') //enter modem mode
+
+      if (chr=='M'||chr=='m'||menuSel==0) //enter modem mode
       {
         Serial.println("\r\nEntering MODEM Mode...");
+        modemMenu();
         if (tcpServerPort > 0) tcpServer.begin();
       
         WiFi.mode(WIFI_STA);
@@ -1320,31 +1605,34 @@ void mainLoop()
         webServer.on("/ath", handleWebHangUp);
         webServer.begin();
         mdns.begin("C64WiFi", WiFi.localIP());
-        menuMode = MODE_MODEM;
       }
-      else if (chr=='F'||chr=='f')
+      else if (chr=='F'||chr=='f'||menuSel==1)
       {
         Serial.println("");
         Serial.println("Initializing SD card...");
         if (!SD.begin(chipSelect)) {
           Serial.println("Initialization failed! Please check that SD card is inserted and formatted as FAT16 or FAT32.");
+          showMessage("\nPLEASE INSERT\n   SD CARD");
           return;
         }
         Serial.println("Initialization Complete.");
-        menuMode = MODE_FILE;
         fileMenu();
       }
-      else if (chr=='P'||chr=='p')
+      else if (chr=='P'||chr=='p'||menuSel==2)
       {
         Serial.println("");
         Serial.println("Initializing SD card...");
         if (!SD.begin(chipSelect)) {
           Serial.println("Initialization failed! Please check that SD card is inserted and formatted as FAT16 or FAT32.");
+          showMessage("\nPLEASE INSERT\n   SD CARD");
           return;
         }
-        Serial.println("Initialization Complete.");
-        menuMode = MODE_PLAYBACK;
+        Serial.println("Initialization Complete.");        
         playbackMenu();
+      }
+      else if (chr=='S'||chr=='s'||menuSel==3)
+      {
+        settingsMenu();
       }
       else
       {
@@ -1353,41 +1641,221 @@ void mainLoop()
     }
 }
 
+void baudLoop()
+{
+  int menuSel=-1;
+  readSwitches();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      baudMenu();
+  }
+  else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
+    baudMenu();
+  }
+  else if (SW3) { //ENTER
+    menuSel = menuIdx;
+  }
+  else if (SW4) { //BACK
+    settingsMenu();
+  }
+  waitSwitches();
+  
+  if (Serial.available() || menuSel>-1)
+  {
+    char chr = Serial.read();
+    Serial.print(chr);
+
+    if (menuSel>-1)
+    {
+      serialspeed = menuIdx;
+      writeSettings();
+      Serial.end();
+      delay(200);
+      Serial.begin(bauds[serialspeed]);
+      settingsMenu();
+    }
+    else
+    {
+      baudMenu();
+    }
+  }
+}
+
+void orientationLoop()
+{
+  int menuSel=-1;
+  readSwitches();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      orientationMenu();
+  }
+  else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
+    orientationMenu();
+  }
+  else if (SW3) { //ENTER
+    menuSel = menuIdx;
+  }
+  else if (SW4) { //BACK
+    settingsMenu();
+  }
+  waitSwitches();
+  
+  if (Serial.available() || menuSel>-1)
+  {
+    char chr = Serial.read();
+    Serial.print(chr);
+
+    if (menuSel>-1)
+    {
+      dispOrientation = menuIdx;
+      writeSettings();
+      if (dispOrientation==D_NORMAL)
+        display.setRotation(0);
+      else
+        display.setRotation(2);
+      settingsMenu();
+    }
+    else
+    {
+      orientationMenu();
+    }
+  }
+}
+
+
+void settingsLoop()
+{
+  int menuSel=-1;
+  readSwitches();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      settingsMenu();
+  } else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
+    settingsMenu();
+  } else if (SW3) { //ENTER
+    menuSel = menuIdx;
+  } else if (SW4) { //BACK
+    mainMenu();
+  }
+  waitSwitches();
+    
+  if (Serial.available() || menuSel>-1)
+  {
+    char chr = Serial.read();
+    Serial.print(chr);
+
+    if (chr=='M'||chr=='m'||menuSel==0) //main menu
+    {
+      mainMenu();
+    }
+    else if (chr=='B'||chr=='b'||menuSel==1)
+    {
+      baudMenu();
+    }
+    else if (chr=='S'||chr=='s'||menuSel==2)
+    {
+      orientationMenu();
+    }
+    else if (chr=='F'||chr=='f'||menuSel==3)
+    {
+       showMessage("***************\n* PLEASE WAIT *\n*FACTORY RESET*\n***************");
+       defaultEEPROM();
+       resetFunc();
+    }
+    else if (chr=='R'||chr=='r'||menuSel==4)
+    {
+      showMessage("***************\n* PLEASE WAIT *\n*  REBOOTING  *\n***************");
+      resetFunc();
+    }
+    
+    else
+    {
+      settingsMenu();
+    }
+  }
+}
+
 void playbackMenu() {
-  Serial.println();
-  Serial.println();
-  Serial.println(" -=- TEXT  PLAYBACK -=-");
-  Serial.println(" [L]ist Files");
-  Serial.println(" [D]isplay File");
-  Serial.println(" [P]layback File");
-  Serial.println(" [E]valuate Key");
-  Serial.println(" [T]erminal Mode");
-  Serial.println(" [M]ain Menu");
-  Serial.println();
-  Serial.print("> ");
+  menuMode = MODE_PLAYBACK;
+  showMenu("PLAYBACK", playbackMenuDisp, 6, MENU_BOTH);
+}
+
+void settingsMenu() {
+  menuMode = MODE_SETTINGS;
+  showMenu("SETTINGS", settingsMenuDisp, 5, MENU_BOTH);
+}
+
+void orientationMenu() {
+  menuMode = MODE_ORIENTATION;
+  /*bool setDflt = (lastMenu != menuMode);
+  if (setDflt) {
+    menuIdx = dispOrientation;
+    lastMenu = menuMode;
+  }*/
+  showMenu("SCREEN", orientationMenuDisp, 2, MENU_BOTH);
+}
+
+void baudMenu() {
+  menuMode = MODE_SETBAUD;
+  bool setDflt = (lastMenu != menuMode);
+  if (setDflt) {
+    menuIdx = serialspeed;
+    lastMenu = menuMode;
+  }
+  showMenu("SET BAUD", baudDisp, 9, MENU_NUM);
 }
 
 void fileMenu() {
-  Serial.println();
-  Serial.println();
-  Serial.println(" -=- FILE  TRANSFER -=-");
-  Serial.println(" [U]pload File (to SD)");
-  Serial.println(" [D]ownload File (from SD)");
-  Serial.println(" [L]ist Files on SD");
-  Serial.println(" [M]ain Menu");
-  Serial.println();
-  Serial.print("> ");
+  menuMode = MODE_FILE;
+  showMenu("FILE XFER", fileMenuDisp, 4, MENU_BOTH);
 }
 
 void fileLoop()
 {
-  if (Serial.available())
+  int menuSel=-1;
+  readSwitches();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      fileMenu();
+  }
+  else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
+    fileMenu();
+  }
+  else if (SW3) { //ENTER
+    menuSel = menuIdx;
+  }
+  else if (SW4) { //BACK
+    mainMenu();
+  }
+  waitSwitches();
+
+  if (Serial.available() || menuSel>-1)
   {
     char chr = Serial.read();
     Serial.print(chr);
-    if (chr=='M'||chr=='m') //main menu
+    
+    if (chr=='M'||chr=='m'||menuSel==0) //main menu
     {
-      menuMode = MODE_MAIN;
       mainMenu();
     }
     else if (chr=='U'||chr=='u') //upload file
@@ -1402,24 +1870,76 @@ void fileLoop()
     {
       listFiles();
     }
-    else if (chr=='G'||chr=='g') //list files
+    else if (menuSel==1)
     {
-      Serial.println("\r\n\r\nTransfer Log:");
-      logFile = SD.open("logfile.txt");
-      if (logFile) {
-        while (logFile.available()) {
-          Serial.write(logFile.read());
-        }
-        logFile.close();
-      } else
-        Serial.println("Unable to open log file");
+      listFilesMenu();
     }
-    else
+    else if (chr=='S'||chr=='s') //send pipe mode
     {
+      sendPipeMode();
+    }
+    else if (chr=='R'||chr=='r') //receive pipe mode
+    {
+      receivePipeMode();
+    }    
+    else if (chr=='[' || chr=='{')
+    {
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      fileMenu();
+    }
+    else if (chr==']' || chr=='}')
+    {
+      menuIdx++;
+      if (menuIdx>(menuCnt-1))
+        menuIdx=0;
+      fileMenu();
+    } else {
       fileMenu();
     }
   }
 }
+
+void listFilesLoop()
+{
+  int menuSel=-1;
+  readSwitches();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      listFilesMenu();
+  }
+  else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
+    listFilesMenu();
+  }
+  else if (SW3) { //ENTER
+    menuSel = menuIdx;
+  }
+  else if (SW4) { //BACK
+    fileMenu();
+  }
+  waitSwitches();
+  
+  if (Serial.available() || menuSel>=-1)
+  {
+    char chr = Serial.read();
+    Serial.print(chr);
+
+    if (menuSel>-1){
+      fileName = files[menuSel];
+      fileMenu();
+      Serial.println("Chosen file: " + fileName);
+    } else {
+      //listFilesMenu();
+    }
+  }
+}
+
 
 void resetGlobals()
 {
@@ -1449,20 +1969,24 @@ void addLog(String logmsg)
   //logFile.close();
 }
 
-String chooseFile()
+String prompt(String msg, String dflt="")
 {
   Serial.println("");
   Serial.println("");
-  Serial.print("Please enter the filename: ");
-  String fileName = getLine();
+  Serial.print(msg);
+  if (dflt!="")
+    Serial.print("[" + dflt + "] ");
+  String resp = getLine();
+  if (resp=="")
+    resp = dflt;
   clearInputBuffer();
-  return fileName;
+  return resp;
 }
 
 void downloadFile()
 {
   resetGlobals();
-  String fileName=chooseFile();
+  fileName=prompt("Please enter the filename: ");
   Serial.println("Downloading " + fileName);
   Serial.println("WAITING FOR TRANSFER START...");
   SD.remove("logfile.txt");
@@ -1478,6 +2002,65 @@ void downloadFile()
   } else {
     Serial.println("Invalid File");
   }
+}
+
+void sendPipeMode()
+{
+  digitalWrite(LED_PIN, HIGH);
+  resetGlobals();
+  fileName=prompt("Please enter the filename: ");
+  File dataFile = SD.open(fileName);
+  if (dataFile) { //make sure the file is valid
+    String fileSize = getFileSize(fileName);
+    String waitTime = prompt("Start time in seconds: ", "30");  
+    Serial.println("\r\nStarting transfer in " + waitTime + " seconds...");
+    digitalWrite(LED_PIN, LOW);
+    delay(waitTime.toInt()*1000);
+    digitalWrite(LED_PIN, HIGH);
+    int c=0;
+    for (int i=0; i<fileSize.toInt(); i++)
+    {
+      if (dataFile.available())
+      {
+        Serial.write(dataFile.read());
+        if (c==512)
+        { //flush the buffer every so often to avoid a WDT reset
+          Serial.flush();
+          led_on();
+          yield();
+          c=0;
+        }
+        else
+          c++;
+      }
+    }
+    Serial.flush();
+    Serial.write((char)26); //DOS EOF
+    Serial.flush();
+    yield();
+    digitalWrite(LED_PIN, LOW);
+    dataFile.close();
+  } else {
+    Serial.println("\r\nInvalid File");
+  }
+}
+
+void receivePipeMode()
+{
+  fileName=prompt("Please enter the filename: ");
+  xferFile = SD.open(fileName, FILE_WRITE);
+  while (true)
+  {    
+    if (Serial.available() > 0) {
+      char c = Serial.read();
+      if (c==27)
+        break;
+      else
+        xferFile.write(c);
+    }
+  }
+  xferFile.flush();
+  xferFile.close();
 }
 
 void downloadLoop(File dataFile, String fileName, String fileSize)
@@ -1785,7 +2368,7 @@ void uploadLoop()
   LinkedList<char> buffer = LinkedList<char>();  
   bool lastByteIAC = false;
   resetGlobals();
-  String fileName="";
+  fileName="";
   String fileSize="";
   unsigned int fileSizeNum=0;
   unsigned int bytesWritten=0;
@@ -1961,40 +2544,65 @@ void uploadLoop()
 
 void playbackLoop()
 {
-  char cmd = getKey();
-  Serial.println(cmd);
-  if (cmd == 'L' || cmd == 'l') {
-    listFiles();
-  } else if (cmd == 'T' || cmd == 't') {
-    changeTerminalMode();
-  } else if (cmd == 'E' || cmd == 'e') {
-    evalKey();
-  } else if (cmd == 'D' || cmd == 'd') {
-    Serial.print("Enter Filename: ");
-    String filename = getLine();
-    if (filename!="") {
-      if (displayFile(filename, false, 0))
-        waitKey(27,96);
-      Serial.println("");
+  int menuSel=-1;
+  readSwitches();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
       playbackMenu();
-    }
-  } else if (cmd == 'P' || cmd == 'p') {
-    Serial.print("Enter Filename: ");
-    String filename = getLine();
-    if (filename!="") {
-      Serial.println("");
-      Serial.print("Begin at Position: ");
-      String pos = getLine();
-      if (displayFile(filename, true, pos.toInt()))
-        waitKey(27,96);
-      Serial.println("");
-      playbackMenu();
-    }
-  } else if (cmd == 'M' || cmd == 'm') {
-    menuMode = MODE_MAIN;
-    mainMenu();   
-  } else {
+  }
+  else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
     playbackMenu();
+  }
+  else if (SW3) { //ENTER
+    menuSel = menuIdx;
+  }
+  else if (SW4) { //BACK
+    mainMenu();
+  }
+  waitSwitches();
+
+  if (Serial.available() || menuSel>-1)
+  {
+    char chr = Serial.read();
+    Serial.println(chr);
+    
+    if (chr == 'L' || chr == 'l') {
+      listFiles();
+    } else if (chr == 'T' || chr == 't') {
+      changeTerminalMode();
+    } else if (chr == 'E' || chr == 'e') {
+      evalKey();
+    } else if (chr == 'D' || chr == 'd') {
+      Serial.print("Enter Filename: ");
+      String fileName = getLine();
+      if (fileName!="") {
+        if (displayFile(fileName, false, 0))
+          waitKey(27,96);
+        Serial.println("");
+        playbackMenu();
+      }
+    } else if (chr == 'P' || chr == 'p') {
+      Serial.print("Enter Filename: ");
+      fileName = getLine();
+      if (fileName!="") {
+        Serial.println("");
+        Serial.print("Begin at Position: ");
+        String pos = getLine();
+        if (displayFile(fileName, true, pos.toInt()))
+          waitKey(27,96);
+        Serial.println("");
+        playbackMenu();
+      }
+    } else if (chr == 'M' || chr == 'm' || menuSel==0) {
+      mainMenu();
+    } else {
+      playbackMenu();
+    }
   }
 }
 
@@ -2029,9 +2637,40 @@ void listFiles()
    Serial.print("> ");
 }
 
+void listFilesMenu() {
+  menuMode = MODE_LISTFILE;
+  int c=0;
+  File root = SD.open("/");
+  while(true) {
+    File entry =  root.openNextFile();
+    if (! entry) {
+     // no more files
+      break;
+    }
+    if (!entry.isDirectory()) {
+      if (c<100)
+      {
+        String fn = entry.name();
+        files[c]=fn;
+        c++;
+      }
+      //Serial.println(entry.size(), DEC);
+    }
+    entry.close();
+  }
+  root.close();
+
+  showMenu("FILE LIST", files, c, MENU_NUM);
+}
+
+void modemMenu() {
+  menuMode = MODE_MODEM;
+  showMenu("DIAL LIST", speedDials, 10, MENU_DISP);
+}
+
 void modemLoop()
-{
-    // Check flow control
+{  
+  // Check flow control
   handleFlowControl();
     
   // Service the Web server
@@ -2045,6 +2684,30 @@ void modemLoop()
     handleIncomingConnection();
   }
 
+  if (cmdMode == true)
+    readSwitches();
+  else
+    readBackSwitch();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      modemMenu();
+  } else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
+    modemMenu();
+  } else if (SW3) { //ENTER
+    dialOut("ATDS" + String(menuIdx));
+  } else if (SW4) { //BACK
+    mainMenu();
+  }
+  if (cmdMode == true)
+    waitSwitches();
+  else
+    waitBackSwitch();
+    
   /**** AT command mode ****/
   if (cmdMode == true)
   {
@@ -2072,6 +2735,8 @@ void modemLoop()
         cmd.remove(cmd.length() - 1);
         if (echo == true) {
           Serial.write(chr);
+          display.write(chr);
+          display.display();
         }
       }
       else
@@ -2079,6 +2744,7 @@ void modemLoop()
         if (cmd.length() < MAX_CMD_LENGTH) cmd.concat(chr);
         if (echo == true) {
           Serial.write(chr);
+          displayChar(chr);
         }
         if (bHex) {
           Serial.print(chr, HEX);
@@ -2198,8 +2864,10 @@ void modemLoop()
       else
       {
         // Non-control codes pass through freely
-        Serial.write(rxByte); yield(); Serial.flush(); yield();
-      }
+        Serial.write(rxByte); 
+        displayChar(rxByte);
+        Serial.flush(); yield();
+       }
       handleFlowControl();
     }
   }
@@ -2225,11 +2893,33 @@ void modemLoop()
     connectTime = 0;
     callConnected = false;
     setCarrier(callConnected);
+    
+    msgFlag=true; //force full menu redraw
+    modemMenu();
     //if (tcpServerPort > 0) tcpServer.begin();
   }
 
   // Turn off tx/rx led if it has been lit long enough to be visible
   if (millis() - ledTime > LED_TIME) digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // toggle LED state
+}
+
+void displayChar(char chr) {
+  if (dispCharCnt>=168 ) {
+    dispCharCnt=0;
+    dispLineCnt=0;
+    display.clearDisplay();
+    display.setCursor(0, 0);     // Start at top-left corner
+  }
+  if (chr==10) {
+    dispCharCnt+=21-dispLineCnt;
+    dispLineCnt=0;
+  } else {
+    dispCharCnt++;
+    if (dispLineCnt>=21)
+      dispLineCnt=0;
+    dispLineCnt++;
+  }
+  display.write(chr); display.display(); yield();
 }
 
 void changeTerminalMode()
