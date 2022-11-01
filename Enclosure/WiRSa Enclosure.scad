@@ -3,18 +3,11 @@ point = 0.4;
 wall = 4 * point;
 
 width = 32;
-height = 15;
-length = 65;
+height = 16.5;
+length = 65.1;
 
 deviation = 0.5;
 $fn=20;
-
-module prism(l, w, h){
-    polyhedron(
-        points=[[0,0,0], [l,0,0], [l,w,0], [0,w,0], [0,w,h], [l,w,h]],
-        faces=[[0,1,2,3],[5,4,3,2],[0,4,5,1],[0,3,4],[5,2,1]]
-    );
-}
 
 module cover(width, length, wall, deviation) {
     difference() {
@@ -23,54 +16,55 @@ module cover(width, length, wall, deviation) {
                 cube([width + wall - deviation, length + wall + ((wall - deviation) / 2),  wall - deviation]);
             }
             cube([width, length + wall,  wall - deviation]);
-            
-            
         }
-        //for (i=[0:10]) {
-        //    translate([(width / 2) - (width * 0.8 / 2), (wall * 3) + (wall * i * 3)+5, -2]) {
-        //        cube(size=[width * 0.8, wall, 10]);
-        //    }
-        //}
-            linear_extrude(.5) {
-            translate([24,48,6])
-                rotate([0,0,90])
-                    mirror([-1,0,0])
-                        text("WiRSa", size=6, font="Courier New:style=bold");
-            translate([14,63,6])
-                rotate([0,0,90])
-                    mirror([-1,0,0])
-                        text("RetroDisks", size=7, font="Retronoid:style=Italic");
-                
-            }
+        
+        //display opening
+        //translate([4, 15, 0]) {
+        translate([4, 14, 0]) {
+            cube([24,14,4]);
+        }
 
+        linear_extrude(.5) {
+            translate([30,60,8]) //Retro
+                rotate([0,0,0])
+                    mirror([-1,0,0])
+                        text("Retro", size=6.5, font="Retronoid:style=Italic");
+            translate([30,53,8]) //Disks
+                rotate([0,0,0])
+                    mirror([-1,0,0])
+                        text("D", size=6.5, font="Retronoid:style=Italic");
+            translate([24,53,8]) //Disks
+                rotate([0,0,0])
+                    mirror([-1,0,0])
+                        text("isks", size=6.5, font="Retronoid:style=Italic");
+            
+            translate([30,5,6]) //WiRSa
+                rotate([0,0,0])
+                    mirror([-1,0,0])
+                        text("WiRSa", size=7, font="Courier New:style=bold");
+
+            translate([32,45,6]) //select
+                    mirror([-1,0,0])
+                        text("=", size=7.5, font="Webdings:style=bold");
+
+            translate([11,45,6]) //up
+                    mirror([-1,0,0])
+                        text("5", size=8, font="Webdings:style=bold");
+
+            translate([32,36,6])  //back
+                    mirror([-1,0,0])
+                        text("7", size=7.5, font="Webdings:style=bold");
+                        
+            translate([11,36,6]) //down
+                    mirror([-1,0,0])
+                        text("6", size=8, font="Webdings:style=bold");
+        }
     }
 }
 
 module enclosure(width, length, height, wall, deviation) {
     difference() {
-        union() {
-            translate([wall, wall, wall]) {
-                cube([2, 24+8, height]);
-            }
-            translate([width-(wall-0.3), wall+8, wall]) {
-                cube([3, 24, height]);
-            }
-            
-            
-            difference() {
-                cube([width + (2 * wall), length + (2 * wall), height + wall]);
-                translate([wall, wall, wall]) {
-                    cube([width, length, height + 0.1]);
-                }
-                
-                
-                //Reset Hole
-                translate([width, wall+4.5, wall+4.5]) {
-                    rotate(a=90, [0,90,0]) 
-                        cylinder(5,2.5,2.5);
-                }
-            }
-
+        union() {                      
             //top rails
             translate([0, 0, wall + height]) {
                 cube([wall / 2, (length + wall * 2), wall]);
@@ -92,30 +86,53 @@ module enclosure(width, length, height, wall, deviation) {
             translate([0, length + wall, height + (wall * 2)]) {
                 cube([(width + wall * 2), wall, wall - deviation]);
             }
+            
+            difference() {
+                cube([width + (2 * wall), length + (2 * wall), height + wall]);
+                translate([wall, wall, wall]) {
+                    cube([width, length, height + 0.1]);
+                }
+                
+            }
         }
 
-        //SD slots
-        //translate([(width / 2)-7, 0, height-4]) {
-        //    cube(size=[17, 10, 3]);
-        //}
+        //Reset Hole
+        translate([width, wall+4.5, wall+4.5]) {
+            rotate(a=90, [0,90,0]) 
+                cylinder(5,2.5,2.5);
+        }
+        
+        //SW1 Button Notch
+        translate([width, wall+45, wall+10]) {
+            cube([4,4,height],2.5,2.5);
+        }
+        //SW2 Button Notch
+        translate([width, wall+35, wall+10]) {
+            cube([4,4,height],2.5,2.5);
+        }
+        //SW3 Button Notch
+        translate([-1, wall+45, wall+10]) {
+            cube([4,4,height],2.5,2.5);
+        }
+        //SW4 Button Notch
+        translate([-1, wall+35 , wall+10]) {
+            cube([4,4,height],2.5,2.5);
+        }
 
         //serial port hole
         translate([wall+1, length, 4]) {
-            cube(size=[width-2, 10, height-3]);
+            cube(size=[width-2, 10, height-4]);
         }
         translate([wall, length, 7.5]) {
-            cube(size=[2, 5, height-10]);
-        }
-        
+            cube(size=[2, 5, height-11]);
+        }        
         translate([width-wall, length, 7.5]) {
-            cube(size=[3, 5, height-10]);
-        }
+            cube(size=[3, 5, height-11]);
+        }        
         
-
-        
-        //usb power port
+        //usb power port & sd card
         translate([wall + (width / 2) - 7, 0, wall + 2]) {
-            cube([14, wall, 11]);
+            cube([14, wall, 12]);
         }
     }
 }
@@ -125,6 +142,5 @@ enclosure(width, length, height, wall, deviation);
 translate([-width - 5, 0, 0]) {
     cover(width, length, wall, deviation);
 }
-
 
 render();
