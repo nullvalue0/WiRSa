@@ -13,7 +13,12 @@ The firmware has 3 main functions:
 2. Text Playback mode, for reading and printing text files from the SD card over the serial line.
 3. File Transfer mode which offers the ability to send and receive data from the SD card with the host computer (so long as the host computer is running a terminal software which supports file transfer). Currently only the file transfer protocol YMODEM is supported. There are plans to also implement XMODEM,  YMODEM Batch, ZMODEM and KERMIT.
 
-On a new build, the default serial settings will be 300 baud, 8-N-1. You can change the baud rate while in Modem Mode, with the SET BAUD RATE (AT$SB=) command.
+On a new build, the default serial settings will be 9600 baud, 8-N-1. You can change the baud rate while in Modem Mode, with the SET BAUD RATE (AT$SB=) command.
+
+## Flashing the Firmware
+If you have a WiRSa and want to upgrade the firware to the latest version found here, you have 2 options... 
+1. Install the Arduino software and download the /Firmware/WiRSa/WiRSa.ino file. Load the .ino file and compile/upload to the device. You may need to resolve some library dependancies.
+2. Much simpler way is to download the filecompiled binary at /Firmware/WiRSa/WiRSa.ino.d1_mini.bin. Download [NodeMCU-PyFlasher](https://github.com/marcelstoer/nodemcu-pyflasher/releases) and use it to upload the new version. 
 
 ## Board Design / PCB
 The WiRSA is based on a few cheaply available components and a custom PCB which ties them all together. The components needed are: 
