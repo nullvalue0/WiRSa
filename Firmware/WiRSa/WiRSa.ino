@@ -1,5 +1,5 @@
 /**************************************************************************
-   RetroDisks WiRSa - Wifi RS232 Serial Modem Adapter with File Transfer features
+   RetroDisks WiRSa v2 - Wifi RS232 Serial Modem Adapter with File Transfer features
    Copyright (C) 2022 Aron Hoekstra <nullvalue@gmail.com>
 
    based on:
@@ -112,7 +112,7 @@
 #define MODE_ORIENTATION 7
 
 #define MENU_BOTH 0 //show menu on both serial port & display using first letter as selector
-#define MENU_NUM  1 //show menu on both serial port & display but serial uses a numeric selector
+#define MENU_NUM  1 //show menu on both serial port & display but serial uses a numeric selector - has a limit of 10 items because the input currently returns after 1 character entry
 #define MENU_DISP 2 //show menu on display only
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
@@ -123,7 +123,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 // Global variables
-String build = "202210310817";
+String build = "v2.01";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -150,10 +150,10 @@ String speedDials[10];
 const int bauds[] = { 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 };
 String baudDisp[] = { "300", "1200", "2400", "4800", "9600", "19.2k", "38.4k", "57.6k", "115k" };
 String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Playback Text", "Settings" };
-String settingsMenuDisp[] = { String("\xAE") + String("BACK"), "Baud Rate", "Screen", "Factory Reset", "Reboot" };
+String settingsMenuDisp[] = { "MAIN", "Baud Rate", "Screen", "Factory Reset", "Reboot", "About" };
 String orientationMenuDisp[] = { "Normal", "Flipped" };
-String playbackMenuDisp[] = { String("\xAE") + String("BACK"), "List Files", "Display File", "Playback File", "Evaluate Key", "Terminal Mode" };
-String fileMenuDisp[] = { String("\xAE") + String("BACK"), 
+String playbackMenuDisp[] = { "MAIN", "List Files", "Display File", "Playback File", "Evaluate Key", "Terminal Mode" };
+String fileMenuDisp[] = { "MAIN", 
                           //"Upload YM - to SD)", 
                           //"Download YM-from SD", 
                           "List Files on SD", 
@@ -781,7 +781,7 @@ void showMenu(String menuName, String options[], int sz, int dispMode) {
 
   if (dispMode!=MENU_DISP) {
     for (int i=0;i<menuCnt;i++) {
-      if (menuMode==MENU_NUM)
+      if (dispMode==MENU_NUM)
         Serial.println(" [" + String(i) + "] " + options[i]);
       else //MENU_BOTH
         Serial.println(" [" + options[i].substring(0,1) + "]" + options[i].substring(1));
@@ -870,6 +870,7 @@ void setup() {
   pinMode(SW2_PIN, INPUT);
   pinMode(SW3_PIN, INPUT);
   pinMode(SW4_PIN, INPUT);
+  Serial.println("");
   Serial.println("-= RetroDisks  WiRSa =-");
   mainMenu();
 }
@@ -1664,25 +1665,33 @@ void baudLoop()
     settingsMenu();
   }
   waitSwitches();
-  
-  if (Serial.available() || menuSel>-1)
-  {
-    char chr = Serial.read();
-    Serial.print(chr);
 
-    if (menuSel>-1)
+  bool serAvl = Serial.available();
+  char chr;
+  if (serAvl) {
+    chr = Serial.read();
+    Serial.print(chr);
+  }
+  
+  if (menuSel>-1)
+  {
+    serialspeed = menuIdx;
+    writeSettings();
+    Serial.end();
+    delay(200);
+    Serial.begin(bauds[serialspeed]);
+    settingsMenu();
+  } else if (serAvl) {
+    if (chr>=48 && chr <=57) //between 0-9
     {
-      serialspeed = menuIdx;
+      serialspeed = chr-48;  
       writeSettings();
       Serial.end();
       delay(200);
       Serial.begin(bauds[serialspeed]);
       settingsMenu();
-    }
-    else
-    {
-      baudMenu();
-    }
+    } else
+      baudMenu();    
   }
 }
 
@@ -1710,14 +1719,23 @@ void orientationLoop()
   }
   waitSwitches();
   
-  if (Serial.available() || menuSel>-1)
-  {
-    char chr = Serial.read();
+  bool serAvl = Serial.available();
+  char chr;
+  if (serAvl) {
+    chr = Serial.read();
     Serial.print(chr);
+  }
 
+  if (serAvl || menuSel>-1)
+  {
+    if (chr=='N'||chr=='n')
+      menuSel=0;
+    else if (chr=='F'||chr=='f')
+      menuSel=1;
+      
     if (menuSel>-1)
     {
-      dispOrientation = menuIdx;
+      dispOrientation = menuSel;
       writeSettings();
       if (dispOrientation==D_NORMAL)
         display.setRotation(0);
@@ -1754,11 +1772,15 @@ void settingsLoop()
   }
   waitSwitches();
     
-  if (Serial.available() || menuSel>-1)
-  {
-    char chr = Serial.read();
+  bool serAvl = Serial.available();
+  char chr;
+  if (serAvl) {
+    chr = Serial.read();
     Serial.print(chr);
+  }
 
+  if (serAvl || menuSel>-1)
+  {
     if (chr=='M'||chr=='m'||menuSel==0) //main menu
     {
       mainMenu();
@@ -1773,16 +1795,22 @@ void settingsLoop()
     }
     else if (chr=='F'||chr=='f'||menuSel==3)
     {
+       Serial.println("** PLEASE WAIT: FACTORY RESET **");
        showMessage("***************\n* PLEASE WAIT *\n*FACTORY RESET*\n***************");
        defaultEEPROM();
        resetFunc();
     }
     else if (chr=='R'||chr=='r'||menuSel==4)
     {
+      Serial.println("** PLEASE WAIT: REBOOTING **");
       showMessage("***************\n* PLEASE WAIT *\n*  REBOOTING  *\n***************");
       resetFunc();
+    }    
+    else if (chr=='A'||chr=='a'||menuSel==5)
+    {
+      Serial.println("** WiRSa BUILD: " + build + " **");
+      showMessage("***************\n* WiRSa BUILD *\n*    " + build + "    *\n***************");
     }
-    
     else
     {
       settingsMenu();
@@ -1797,7 +1825,7 @@ void playbackMenu() {
 
 void settingsMenu() {
   menuMode = MODE_SETTINGS;
-  showMenu("SETTINGS", settingsMenuDisp, 5, MENU_BOTH);
+  showMenu("SETTINGS", settingsMenuDisp, 6, MENU_BOTH);
 }
 
 void orientationMenu() {
@@ -2598,7 +2626,7 @@ void playbackLoop()
         Serial.println("");
         playbackMenu();
       }
-    } else if (chr == 'M' || chr == 'm' || menuSel==0) {
+    } else if (chr=='M'||chr=='m'||menuSel==0) {
       mainMenu();
     } else {
       playbackMenu();
