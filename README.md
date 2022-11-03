@@ -15,7 +15,7 @@ The firmware has 3 main functions:
 
 On a new build, the default serial settings will be 9600 baud, 8-N-1. You can change the baud rate while in Modem Mode, with the SET BAUD RATE (AT$SB=) command.
 
-Because this is based on the Paul Rickards WiFi232 device, you can refer to his excellent [original documentation](http://biosrhythm.com/wifi232/WiFi232ModemUsersGuide.pdf) for Modem Mode usage & commands.
+Because this is similar to the Paul Rickards WiFi232 device, you can refer to his [excellent documentation](http://biosrhythm.com/wifi232/WiFi232ModemUsersGuide.pdf) for Modem Mode usage & commands.
 
 ## Flashing the Firmware
 If you have a WiRSa and want to upgrade the firware to the latest version found here, you have 2 options... 
