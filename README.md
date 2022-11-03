@@ -18,7 +18,9 @@ On a new build, the default serial settings will be 9600 baud, 8-N-1. You can ch
 ## Flashing the Firmware
 If you have a WiRSa and want to upgrade the firware to the latest version found here, you have 2 options... 
 1. Install the Arduino software and download the /Firmware/WiRSa/WiRSa.ino file. Load the .ino file and compile/upload to the device. You may need to resolve some library dependancies.
-2. Much simpler way is to download the precompiled binary at /Firmware/WiRSa/WiRSa.ino.d1_mini.bin. Download [NodeMCU-PyFlasher](https://github.com/marcelstoer/nodemcu-pyflasher/releases) and use it to upload the new version. 
+2. Much simpler way is to download the precompiled binary at /Firmware/WiRSa/WiRSa.ino.d1_mini.bin. Download [NodeMCU-PyFlasher](https://github.com/marcelstoer/nodemcu-pyflasher/releases) and use it to upload the new version.
+
+For programming, remove the 2 white jumpers. This disables the RS232-TTL converter which sometimes causes interference when programming. After programming, replace jumpers for normal use.
 
 ## Board Design / PCB
 The WiRSA is based on a few cheaply available components and a custom PCB which ties them all together. The components needed are: 
