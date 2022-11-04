@@ -635,7 +635,7 @@ void waitForEnter() {
 }
 
 void displayHelp() {
-  //mainMenu();
+  
   Serial.println("AT COMMAND SUMMARY:"); yield();
   Serial.println("DIAL HOST......: ATDTHOST:PORT"); yield();
   Serial.println("SPEED DIAL.....: ATDSN (N=0-9)"); yield();
@@ -683,9 +683,9 @@ String padLeft(String s, int len) {
   return s;
 }
 
-void mainMenu() {
+void mainMenu(bool arrow) {
   menuMode=MODE_MAIN;
-  showMenu("MAIN", mainMenuDisp, 4, MENU_BOTH);
+  showMenu("MAIN", mainMenuDisp, 4, (arrow?MENU_DISP:MENU_BOTH));
 }
 
 void showHeader(String menu, int dispMode) {
@@ -872,7 +872,7 @@ void setup() {
   pinMode(SW4_PIN, INPUT);
   Serial.println("");
   Serial.println("-= RetroDisks  WiRSa =-");
-  mainMenu();
+  mainMenu(false);
 }
 
 String ipToString(IPAddress ip) {
@@ -1435,7 +1435,7 @@ void command()
   }
 
   else if (upCmd == "ATX") {
-    mainMenu();
+    mainMenu(false);
   }
 
   /**** Set incoming TCP server port ****/
@@ -1569,13 +1569,13 @@ void mainLoop()
         menuIdx--;
         if (menuIdx<0)
           menuIdx=menuCnt-1;
-        mainMenu();
+        mainMenu(true);
     }
     else if (SW2) { //DOWN
       menuIdx++;
       if (menuIdx>(menuCnt-1))
         menuIdx=0;
-      mainMenu();
+      mainMenu(true);
     }
     else if (SW3) { //ENTER
       menuSel = menuIdx;
@@ -1583,12 +1583,16 @@ void mainLoop()
     else if (SW4) { //BACK
     }
     waitSwitches();
-    
-    if (Serial.available() || menuSel>-1)
-    {
-      char chr = Serial.read();
-      Serial.print(chr);
 
+    int serAvl = Serial.available();
+    char chr;
+    if (serAvl>0) {
+      chr = Serial.read();
+      Serial.print(chr);
+    }
+
+    if (serAvl>0 || menuSel>-1)
+    {
       if (chr=='M'||chr=='m'||menuSel==0) //enter modem mode
       {
         Serial.println("\r\nEntering MODEM Mode...");
@@ -1617,7 +1621,7 @@ void mainLoop()
           return;
         }
         Serial.println("Initialization Complete.");
-        fileMenu();
+        fileMenu(false);
       }
       else if (chr=='P'||chr=='p'||menuSel==2)
       {
@@ -1629,15 +1633,15 @@ void mainLoop()
           return;
         }
         Serial.println("Initialization Complete.");        
-        playbackMenu();
+        playbackMenu(false);
       }
       else if (chr=='S'||chr=='s'||menuSel==3)
       {
-        settingsMenu();
+        settingsMenu(false);
       }
-      else
-      {
-        mainMenu();
+      else if (serAvl>0)
+      { //redisplay the menu 
+        mainMenu(false);
       }
     }
 }
@@ -1650,25 +1654,25 @@ void baudLoop()
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
-      baudMenu();
+      baudMenu(true);
   }
   else if (SW2) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
-    baudMenu();
+    baudMenu(true);
   }
   else if (SW3) { //ENTER
     menuSel = menuIdx;
   }
   else if (SW4) { //BACK
-    settingsMenu();
+    settingsMenu(false);
   }
   waitSwitches();
 
-  bool serAvl = Serial.available();
+  int serAvl = Serial.available();
   char chr;
-  if (serAvl) {
+  if (serAvl>0) {
     chr = Serial.read();
     Serial.print(chr);
   }
@@ -1680,8 +1684,8 @@ void baudLoop()
     Serial.end();
     delay(200);
     Serial.begin(bauds[serialspeed]);
-    settingsMenu();
-  } else if (serAvl) {
+    settingsMenu(false);
+  } else if (serAvl>0) {
     if (chr>=48 && chr <=57) //between 0-9
     {
       serialspeed = chr-48;  
@@ -1689,9 +1693,9 @@ void baudLoop()
       Serial.end();
       delay(200);
       Serial.begin(bauds[serialspeed]);
-      settingsMenu();
+      settingsMenu(false);
     } else
-      baudMenu();    
+      baudMenu(false);    
   }
 }
 
@@ -1703,30 +1707,30 @@ void orientationLoop()
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
-      orientationMenu();
+      orientationMenu(true);
   }
   else if (SW2) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
-    orientationMenu();
+    orientationMenu(true);
   }
   else if (SW3) { //ENTER
     menuSel = menuIdx;
   }
   else if (SW4) { //BACK
-    settingsMenu();
+    settingsMenu(false);
   }
   waitSwitches();
   
-  bool serAvl = Serial.available();
+  int serAvl = Serial.available();
   char chr;
-  if (serAvl) {
+  if (serAvl>0) {
     chr = Serial.read();
     Serial.print(chr);
   }
 
-  if (serAvl || menuSel>-1)
+  if (serAvl>0 || menuSel>-1)
   {
     if (chr=='N'||chr=='n')
       menuSel=0;
@@ -1741,11 +1745,11 @@ void orientationLoop()
         display.setRotation(0);
       else
         display.setRotation(2);
-      settingsMenu();
+      settingsMenu(false);
     }
-    else
+    else if (serAvl>0)
     {
-      orientationMenu();
+      orientationMenu(false);
     }
   }
 }
@@ -1759,39 +1763,39 @@ void settingsLoop()
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
-      settingsMenu();
+      settingsMenu(true);
   } else if (SW2) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
-    settingsMenu();
+    settingsMenu(true);
   } else if (SW3) { //ENTER
     menuSel = menuIdx;
   } else if (SW4) { //BACK
-    mainMenu();
+    mainMenu(false);
   }
   waitSwitches();
     
-  bool serAvl = Serial.available();
+  int serAvl = Serial.available();
   char chr;
-  if (serAvl) {
+  if (serAvl>0) {
     chr = Serial.read();
     Serial.print(chr);
   }
 
-  if (serAvl || menuSel>-1)
+  if (serAvl>0 || menuSel>-1)
   {
     if (chr=='M'||chr=='m'||menuSel==0) //main menu
     {
-      mainMenu();
+      mainMenu(false);
     }
     else if (chr=='B'||chr=='b'||menuSel==1)
     {
-      baudMenu();
+      baudMenu(false);
     }
     else if (chr=='S'||chr=='s'||menuSel==2)
     {
-      orientationMenu();
+      orientationMenu(false);
     }
     else if (chr=='F'||chr=='f'||menuSel==3)
     {
@@ -1811,46 +1815,46 @@ void settingsLoop()
       Serial.println("** WiRSa BUILD: " + build + " **");
       showMessage("***************\n* WiRSa BUILD *\n*    " + build + "    *\n***************");
     }
-    else
+    else if (serAvl>0)
     {
-      settingsMenu();
+      settingsMenu(false);
     }
   }
 }
 
-void playbackMenu() {
+void playbackMenu(bool arrow) {
   menuMode = MODE_PLAYBACK;
-  showMenu("PLAYBACK", playbackMenuDisp, 6, MENU_BOTH);
+  showMenu("PLAYBACK", playbackMenuDisp, 6, (arrow?MENU_DISP:MENU_BOTH));
 }
 
-void settingsMenu() {
+void settingsMenu(bool arrow) {
   menuMode = MODE_SETTINGS;
-  showMenu("SETTINGS", settingsMenuDisp, 6, MENU_BOTH);
+  showMenu("SETTINGS", settingsMenuDisp, 6, (arrow?MENU_DISP:MENU_BOTH));
 }
 
-void orientationMenu() {
+void orientationMenu(bool arrow) {
   menuMode = MODE_ORIENTATION;
   /*bool setDflt = (lastMenu != menuMode);
   if (setDflt) {
     menuIdx = dispOrientation;
     lastMenu = menuMode;
   }*/
-  showMenu("SCREEN", orientationMenuDisp, 2, MENU_BOTH);
+  showMenu("SCREEN", orientationMenuDisp, 2, (arrow?MENU_DISP:MENU_BOTH));
 }
 
-void baudMenu() {
+void baudMenu(bool arrow) {
   menuMode = MODE_SETBAUD;
   bool setDflt = (lastMenu != menuMode);
   if (setDflt) {
     menuIdx = serialspeed;
     lastMenu = menuMode;
   }
-  showMenu("SET BAUD", baudDisp, 9, MENU_NUM);
+  showMenu("SET BAUD", baudDisp, 9, (arrow?MENU_DISP:MENU_NUM));
 }
 
-void fileMenu() {
+void fileMenu(bool arrow) {
   menuMode = MODE_FILE;
-  showMenu("FILE XFER", fileMenuDisp, 4, MENU_BOTH);
+  showMenu("FILE XFER", fileMenuDisp, 4, (arrow?MENU_DISP:MENU_BOTH));
 }
 
 void fileLoop()
@@ -1861,19 +1865,19 @@ void fileLoop()
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
-      fileMenu();
+      fileMenu(true);
   }
   else if (SW2) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
-    fileMenu();
+    fileMenu(true);
   }
   else if (SW3) { //ENTER
     menuSel = menuIdx;
   }
   else if (SW4) { //BACK
-    mainMenu();
+    mainMenu(false);
   }
   waitSwitches();
 
@@ -1884,7 +1888,7 @@ void fileLoop()
     
     if (chr=='M'||chr=='m'||menuSel==0) //main menu
     {
-      mainMenu();
+      mainMenu(false);
     }
     else if (chr=='U'||chr=='u') //upload file
     {
@@ -1900,7 +1904,7 @@ void fileLoop()
     }
     else if (menuSel==1)
     {
-      listFilesMenu();
+      listFilesMenu(false);
     }
     else if (chr=='S'||chr=='s') //send pipe mode
     {
@@ -1910,21 +1914,8 @@ void fileLoop()
     {
       receivePipeMode();
     }    
-    else if (chr=='[' || chr=='{')
-    {
-      menuIdx--;
-      if (menuIdx<0)
-        menuIdx=menuCnt-1;
-      fileMenu();
-    }
-    else if (chr==']' || chr=='}')
-    {
-      menuIdx++;
-      if (menuIdx>(menuCnt-1))
-        menuIdx=0;
-      fileMenu();
-    } else {
-      fileMenu();
+    else {
+      fileMenu(false);
     }
   }
 }
@@ -1937,19 +1928,19 @@ void listFilesLoop()
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
-      listFilesMenu();
+      listFilesMenu(true);
   }
   else if (SW2) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
-    listFilesMenu();
+    listFilesMenu(true);
   }
   else if (SW3) { //ENTER
     menuSel = menuIdx;
   }
   else if (SW4) { //BACK
-    fileMenu();
+    fileMenu(false);
   }
   waitSwitches();
   
@@ -1960,7 +1951,7 @@ void listFilesLoop()
 
     if (menuSel>-1){
       fileName = files[menuSel];
-      fileMenu();
+      fileMenu(false);
       Serial.println("Chosen file: " + fileName);
     } else {
       //listFilesMenu();
@@ -2578,19 +2569,19 @@ void playbackLoop()
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
-      playbackMenu();
+      playbackMenu(true);
   }
   else if (SW2) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
-    playbackMenu();
+    playbackMenu(true);
   }
   else if (SW3) { //ENTER
     menuSel = menuIdx;
   }
   else if (SW4) { //BACK
-    mainMenu();
+    mainMenu(false);
   }
   waitSwitches();
 
@@ -2612,7 +2603,7 @@ void playbackLoop()
         if (displayFile(fileName, false, 0))
           waitKey(27,96);
         Serial.println("");
-        playbackMenu();
+        playbackMenu(false);
       }
     } else if (chr == 'P' || chr == 'p') {
       Serial.print("Enter Filename: ");
@@ -2624,12 +2615,12 @@ void playbackLoop()
         if (displayFile(fileName, true, pos.toInt()))
           waitKey(27,96);
         Serial.println("");
-        playbackMenu();
+        playbackMenu(false);
       }
     } else if (chr=='M'||chr=='m'||menuSel==0) {
-      mainMenu();
+      mainMenu(false);
     } else {
-      playbackMenu();
+      playbackMenu(false);
     }
   }
 }
@@ -2665,7 +2656,7 @@ void listFiles()
    Serial.print("> ");
 }
 
-void listFilesMenu() {
+void listFilesMenu(bool arrow) {
   menuMode = MODE_LISTFILE;
   int c=0;
   File root = SD.open("/");
@@ -2688,7 +2679,7 @@ void listFilesMenu() {
   }
   root.close();
 
-  showMenu("FILE LIST", files, c, MENU_NUM);
+  showMenu("FILE LIST", files, c, (arrow?MENU_DISP:MENU_NUM));
 }
 
 void modemMenu() {
@@ -2729,7 +2720,7 @@ void modemLoop()
   } else if (SW3) { //ENTER
     dialOut("ATDS" + String(menuIdx));
   } else if (SW4) { //BACK
-    mainMenu();
+    mainMenu(false);
   }
   if (cmdMode == true)
     waitSwitches();
