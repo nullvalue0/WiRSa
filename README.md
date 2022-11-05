@@ -1,11 +1,13 @@
-# WiRSa
+![WiRSa in action](/Pictures/v2-IMG_20221031_160522~2 (4).jpg)
+
+# RetroDisks WiRSa
 This project is a Wifi - RS232 Serial adapter for getting vintage computers connected to the internet (telnet or http). Use it to connect your vintage computer to a telnet BBS or other internet resources. At it's heart is a Wemos ESP8266 wifi-enabled controller. This project differs from other Wifi Serial adapters in that it adds a micro-SD card module for reading and writing data. The intended use case is for people who have a vintage computer but have no ability (or desire) to create floppies, and doesn't want to modify the computer (by installing a permantent floppy emulation solution something like a Gotek). V2 also adds a 128x64 display and 4 navigation buttons to make setup easier.
 
 ## Some assembled units available for sale
-If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale on my eBay store here: https://www.ebay.com/itm/175299622202 
+If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale. I had quite a few PCB's made up and I am trying to keep these as cheap as possible. If you're exploring your options, I think you'll find that I'm asking less than most of the other options out there. You can purchase on my eBay store here: https://www.ebay.com/itm/175299622202 or directly on the RetroDisks site here: https://retrodisks.com/en/home/43-61-wirsa-wifi-wireless-rs232-serial-adapter#/26-wirsa_options-fully_assembled_with_case
 
 ## History
-This began as a device I built for the filming of Apple TV's "The Shining Girls". There were a number of scenes involving computer terminals. They had the terminals but no idea how to display anything on them. I came up with this device as a means to display a static block of text at the terminal or "playback" a text file - ie: when the actor hits a key on the keyboard, regardless of what key is pressed - the next character from the text file gets printed. This creates the illusion that the actor is actually typing the document in real-time but they're really just mashing keys. I've included this text playback feature in the firmware. The text file is read directly from the SD card. I had previously used a Wemos to build a Wifi modem for my Commodore 64 user port. This project is basically the combination of those 2 use cases.
+This began as a device I built for the filming of Apple TV's "The Shining Girls". There were a number of scenes involving computer terminals. They had the terminals but no idea how to display anything on them. I came up with this device as a means to display a static block of text at the terminal or "playback" a text file - ie: when the actor hits a key on the keyboard, regardless of what key is pressed - the next character from the text file gets printed. This creates the illusion that the actor is actually typing the document in real-time but they're really just mashing keys. I've included this text playback feature in the firmware. The text file is read directly from the SD card. I had previously used a Wemos to build a Wifi modem for my Commodore 64 user port. This device is basically the combination of those 2 projects.
 
 ## Firmware
 The firmware has 3 main functions:  
@@ -15,7 +17,7 @@ The firmware has 3 main functions:
 
 On a new build, the default serial settings will be 9600 baud, 8-N-1. You can change the baud rate while in Modem Mode, with the SET BAUD RATE (AT$SB=) command.
 
-Because this is similar to the Paul Rickards WiFi232 device, you can refer to his [excellent documentation](http://biosrhythm.com/wifi232/WiFi232ModemUsersGuide.pdf) for Modem Mode usage & commands.
+Because this is similar to the Paul Rickards WiFi232 device, you can refer to [his documentation](http://biosrhythm.com/wifi232/WiFi232ModemUsersGuide.pdf) for Modem Mode usage & commands.
 
 ## Flashing the Firmware
 If you have a WiRSa and want to upgrade the firware to the latest version found here, you have 2 options... 
