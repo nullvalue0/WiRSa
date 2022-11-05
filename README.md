@@ -21,7 +21,7 @@ On a new build, the default serial settings will be 9600 baud, 8-N-1. You can ch
 
 Because this is similar to the Paul Rickards WiFi232 device, you can refer to [that documentation](http://biosrhythm.com/wifi232/WiFi232ModemUsersGuide.pdf) for Modem Mode usage & commands.
 
-![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image2.jpg)
+![WiRSa Unboxing Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image2.jpg)
 
 ## Flashing the Firmware
 If you have a WiRSa and want to upgrade the firware to the latest version found here, you have 2 options... 
@@ -43,6 +43,8 @@ The WiRSA is based on a few cheaply available components and a custom PCB which 
 • (4) 10k resistors
 • (2) jumpers & (2) 2-pin jumper headers
 Everything gets soldered to a custom PCB. The KiCAD schematic, PCB and Gerber files are all included in this repo. 
+
+![WiRSa PCB Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image5.jpg)
 
 ## Enclosure
 The enclosure has been created in OpenSCAD and the source is included here as well as a resulting STL. It has a sliding top for easy access to the PCB, openings in the front for the Serial connector, opening in the rear for USB & SD card, and a small hole on the side to access the Wemos reset switch. The cover has an opening for the OLED display.
