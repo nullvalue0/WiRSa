@@ -45,4 +45,4 @@ The WiRSA is based on a few cheaply available components and a custom PCB which 
 Everything gets soldered to a custom PCB. The KiCAD schematic, PCB and Gerber files are all included in this repo. 
 
 ## Enclosure
-The enclosure has been created in OpenSCAD and the source is included here as well as a resulting STL. It has a sliding top for easy access to the PCB, openings in the front for the Serial connector, opening in the rear for USB & SD card, and a small hole on the side to access the Wemos reset switch. The cover has an opening for the display.
+The enclosure has been created in OpenSCAD and the source is included here as well as a resulting STL. It has a sliding top for easy access to the PCB, openings in the front for the Serial connector, opening in the rear for USB & SD card, and a small hole on the side to access the Wemos reset switch. The cover has an opening for the OLED display.
