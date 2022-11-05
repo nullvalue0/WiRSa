@@ -1,7 +1,7 @@
-![WiRSa in action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image1.jpg)
-
 # RetroDisks WiRSa
 This project is a Wifi - RS232 Serial adapter for getting vintage computers connected to the internet (telnet or http). Use it to connect your vintage computer to a telnet BBS or other internet resources. At it's heart is a Wemos ESP8266 wifi-enabled controller. This project differs from other Wifi Serial adapters in that it adds a micro-SD card module for reading and writing data. The intended use case is for people who have a vintage computer but have no ability (or desire) to create floppies, and doesn't want to modify the computer (by installing a permantent floppy emulation solution something like a Gotek). V2 also adds a 128x64 display and 4 navigation buttons to make setup easier.
+
+![WiRSa in action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image1.jpg)
 
 ## Some assembled units available for sale
 If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale. I had quite a few PCB's made up and I am trying to keep these as cheap as possible. If you're exploring your options, I think you'll find that I'm asking less than most of the other options out there. You can purchase on my eBay store here: https://www.ebay.com/itm/175299622202 or directly on the RetroDisks site here: https://retrodisks.com/en/home/43-61-wirsa-wifi-wireless-rs232-serial-adapter#/26-wirsa_options-fully_assembled_with_case
