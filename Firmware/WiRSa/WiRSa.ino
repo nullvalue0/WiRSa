@@ -3,12 +3,13 @@
    Copyright (C) 2022 Aron Hoekstra <nullvalue@gmail.com>
 
    based on:
-     ESP8266 based virtual modem
+     Virtual modem for ESP8266
      https://github.com/jsalin/esp8266_modem
+     Copyright (C) 2015 Jussi Salin <salinjus@gmail.com>
    
    and the improvements added by:
-     WiFi SIXFOUR - A virtual WiFi modem based on the ESP 8266 chipset
-     Copyright (C) 2016 Paul Rickards <rickards@gmail.com>
+     WiFi SIXFOUR - A virtual WiFi modem based on the ESP 8266 chipset by Alwyz
+     https://1200baud.wordpress.com/2017/03/04/build-your-own-9600-baud-c64-wifi-modem-for-20/
    
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal

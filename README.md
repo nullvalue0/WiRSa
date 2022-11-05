@@ -17,7 +17,7 @@ The firmware has 3 main functions:
 2. Text Playback mode, for reading and printing text files from the SD card over the serial line.
 3. File Transfer mode which offers the ability to send and receive data from the SD card with the host computer (so long as the host computer is running a terminal software which supports file transfer). Currently only the file transfer protocol YMODEM is supported. There are plans to also implement XMODEM,  YMODEM Batch, ZMODEM and KERMIT.
 
-On a new build, the default serial settings will be 9600 baud, 8-N-1. You can change the baud rate while in Modem Mode, with the SET BAUD RATE (AT$SB=) command.
+On a new build, the default serial settings will be 9600 baud, 8-N-1. You can change the baud rate while in Modem Mode (with the SET BAUD RATE (AT$SB=) command) or in the Settings menu on the display.
 
 Because this is similar to the Paul Rickards WiFi232 device, you can refer to [that documentation](http://biosrhythm.com/wifi232/WiFi232ModemUsersGuide.pdf) for Modem Mode usage & commands.
 
