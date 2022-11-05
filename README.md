@@ -3,7 +3,7 @@ This project is a Wifi - RS232 Serial adapter for getting vintage computers conn
 
 ![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image1.jpg)
 
-## Some assembled units available for sale
+## Kits & assembled units available for sale
 If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale. I had quite a few PCB's made up and I am trying to keep these as cheap as possible. If you're exploring your options, I think you'll find that I'm asking less than most of the other options out there. You can purchase on my eBay store here: https://www.ebay.com/itm/175299622202 or directly on the RetroDisks site here: https://retrodisks.com/en/home/43-61-wirsa-wifi-wireless-rs232-serial-adapter#/26-wirsa_options-fully_assembled_with_case
 
 ## History
