@@ -1,7 +1,7 @@
 # RetroDisks WiRSa
 This project is a Wifi - RS232 Serial adapter for getting vintage computers connected to the internet (telnet or http). Use it to connect your vintage computer to a telnet BBS or other internet resources. At it's heart is a Wemos ESP8266 wifi-enabled controller. This project differs from other Wifi Serial adapters in that it adds a micro-SD card module for reading and writing data. The intended use case is for people who have a vintage computer but have no ability (or desire) to create floppies, and doesn't want to modify the computer (by installing a permantent floppy emulation solution something like a Gotek). V2 also adds a 128x64 display and 4 navigation buttons to make setup easier.
 
-![WiRSa in action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image1.jpg)
+![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image1.jpg)
 
 ## Some assembled units available for sale
 If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale. I had quite a few PCB's made up and I am trying to keep these as cheap as possible. If you're exploring your options, I think you'll find that I'm asking less than most of the other options out there. You can purchase on my eBay store here: https://www.ebay.com/itm/175299622202 or directly on the RetroDisks site here: https://retrodisks.com/en/home/43-61-wirsa-wifi-wireless-rs232-serial-adapter#/26-wirsa_options-fully_assembled_with_case
@@ -38,5 +38,9 @@ The WiRSA is based on a few cheaply available components and a custom PCB which 
 • (2) jumpers & (2) 2-pin jumper headers
 Everything gets soldered to a custom PCB. The KiCAD schematic, PCB and Gerber files are all included in this repo. 
 
+![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image2.jpg)
+
 ## Enclosure
 The enclosure has been created in OpenSCAD and the source is included here as well as a resulting STL. It has a sliding top for easy access to the PCB, openings in the front for the Serial connector, opening in the rear for USB & SD card, and a small hole on the side to access the Wemos reset switch. The cover has an opening for the display.
+
+![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image3.jpg)
