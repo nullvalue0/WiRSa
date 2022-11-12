@@ -90,6 +90,7 @@
 #define BUSY_MSG_ADDRESS 700
 #define BUSY_MSG_LEN    80
 #define ORIENTATION_ADDRESS 780
+#define defaultMode_ADDRESS 790
 #define LAST_ADDRESS    800
 
 #define SWITCH_PIN 0       // GPIO0 (programmind mode pin)
@@ -111,6 +112,7 @@
 #define MODE_SETBAUD 5
 #define MODE_LISTFILE 6
 #define MODE_ORIENTATION 7
+#define MODE_DEFAULTMODE 8
 
 #define MENU_BOTH 0 //show menu on both serial port & display using first letter as selector
 #define MENU_NUM  1 //show menu on both serial port & display but serial uses a numeric selector - has a limit of 10 items because the input currently returns after 1 character entry
@@ -124,7 +126,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 // Global variables
-String build = "v2.01";
+String build = "v2.02";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -151,7 +153,7 @@ String speedDials[10];
 const int bauds[] = { 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 };
 String baudDisp[] = { "300", "1200", "2400", "4800", "9600", "19.2k", "38.4k", "57.6k", "115k" };
 String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Playback Text", "Settings" };
-String settingsMenuDisp[] = { "MAIN", "Baud Rate", "Screen", "Factory Reset", "Reboot", "About" };
+String settingsMenuDisp[] = { "MAIN", "Baud Rate", "Screen", "Default Menu", "Factory Reset", "Reboot", "About" };
 String orientationMenuDisp[] = { "Normal", "Flipped" };
 String playbackMenuDisp[] = { "MAIN", "List Files", "Display File", "Playback File", "Evaluate Key", "Terminal Mode" };
 String fileMenuDisp[] = { "MAIN", 
@@ -160,6 +162,8 @@ String fileMenuDisp[] = { "MAIN",
                           "List Files on SD", 
                           "Send (from SD)", 
                           "Recieve (to SD)" };
+String defaultModeDisp[] = { "Main Menu", "MODEM Mode" };
+                          
 byte serialspeed;
 bool echo = true;
 bool autoAnswer = false;
@@ -175,8 +179,10 @@ byte flowControl = F_NONE;      // Use flow control
 bool txPaused = false;          // Has flow control asked us to pause?
 enum pinPolarity_t { P_INVERTED, P_NORMAL }; // Is LOW (0) or HIGH (1) active?
 byte pinPolarity = P_INVERTED;
-enum dispOrientation_t { D_NORMAL, D_FLIPPED }; // Is LOW (0) or HIGH (1) active?
+enum dispOrientation_t { D_NORMAL, D_FLIPPED }; // Normal or Flipped
 byte dispOrientation = D_NORMAL;
+enum defaultMode_t { D_MAINMENU, D_MODEMMENU }; // Normal or Flipped
+byte defaultMode = D_MAINMENU;
 
 int menuMode = MODE_MAIN;
 int lastMenu = -1;
@@ -256,6 +262,7 @@ void writeSettings() {
   EEPROM.write(FLOW_CONTROL_ADDRESS, byte(flowControl));
   EEPROM.write(PIN_POLARITY_ADDRESS, byte(pinPolarity));
   EEPROM.write(ORIENTATION_ADDRESS, byte(dispOrientation));
+  EEPROM.write(defaultMode_ADDRESS, byte(defaultMode));
   
   for (int i = 0; i < 10; i++) {
     setEEPROM(speedDials[i], speedDialAddresses[i], 50);
@@ -278,6 +285,7 @@ void readSettings() {
   flowControl = EEPROM.read(FLOW_CONTROL_ADDRESS);
   pinPolarity = EEPROM.read(PIN_POLARITY_ADDRESS);
   dispOrientation = EEPROM.read(ORIENTATION_ADDRESS);
+  defaultMode = EEPROM.read(defaultMode_ADDRESS);
 
   for (int i = 0; i < 10; i++) {
     speedDials[i] = getEEPROM(speedDialAddresses[i], 50);
@@ -317,6 +325,7 @@ void defaultEEPROM() {
   setEEPROM("SORRY, SYSTEM IS CURRENTLY BUSY. PLEASE TRY AGAIN LATER.", BUSY_MSG_ADDRESS, BUSY_MSG_LEN);
 
   EEPROM.write(ORIENTATION_ADDRESS, 0x00);
+  EEPROM.write(defaultMode_ADDRESS, 0x00);
   EEPROM.commit();
 }
 
@@ -572,6 +581,7 @@ void displayCurrentSettings() {
   Serial.print("PET"); Serial.print(petTranslate); Serial.print(" "); yield();
   Serial.print("S0:"); Serial.print(autoAnswer); Serial.print(" "); yield();
   Serial.print("ORIENT:"); Serial.print(dispOrientation); Serial.print(" "); yield();
+  Serial.print("DFLTMENU:"); Serial.print(defaultMode); Serial.print(" "); yield();
   Serial.println(); yield();
 
   Serial.println("SPEED DIAL:");
@@ -686,10 +696,13 @@ String padLeft(String s, int len) {
 
 void mainMenu(bool arrow) {
   menuMode=MODE_MAIN;
-  showMenu("MAIN", mainMenuDisp, 4, (arrow?MENU_DISP:MENU_BOTH));
+  showMenu("MAIN", mainMenuDisp, 4, (arrow?MENU_DISP:MENU_BOTH), 0);
 }
 
-void showHeader(String menu, int dispMode) {
+//returns true/false depending on if default menu item should be set
+bool showHeader(String menu, int dispMode) {
+  bool setDef = false;
+  
   if (dispMode!=MENU_DISP) {
     Serial.println();
     Serial.println();
@@ -702,6 +715,7 @@ void showHeader(String menu, int dispMode) {
     msgFlag=false;
     display.clearDisplay();
     menuIdx=0;
+    setDef=true;
     lastMenu=menuMode;
     display.drawLine(0,0,0,63,SSD1306_WHITE);
     display.drawLine(127,0,127,63,SSD1306_WHITE);
@@ -721,6 +735,8 @@ void showHeader(String menu, int dispMode) {
   display.setTextColor(SSD1306_WHITE); // Draw white text
   display.setCursor(0, 13);     // Start at top-left corner
   display.display();
+
+  return setDef;
 }
 
 void showMessage(String message) {
@@ -751,8 +767,9 @@ void showMessage(String message) {
   msgFlag=true;
 }
 
-void showMenu(String menuName, String options[], int sz, int dispMode) {
-  showHeader(menuName, dispMode);
+void showMenu(String menuName, String options[], int sz, int dispMode, int defaultSel) {
+  if (showHeader(menuName, dispMode))
+    menuIdx = defaultSel;
   
   menuCnt = sz;
 
@@ -873,7 +890,11 @@ void setup() {
   pinMode(SW4_PIN, INPUT);
   Serial.println("");
   Serial.println("-= RetroDisks  WiRSa =-");
-  mainMenu(false);
+
+  if (defaultMode==MODE_MAIN)
+    mainMenu(false);
+  else if (defaultMode==MODE_MODEM)
+    enterModemMode();
 }
 
 String ipToString(IPAddress ip) {
@@ -1560,6 +1581,27 @@ void loop()
     listFilesLoop();
   else if (menuMode==MODE_ORIENTATION)
     orientationLoop();
+  else if (menuMode==MODE_DEFAULTMODE)
+    defaultModeLoop();
+}
+
+void enterModemMode()
+{
+    Serial.println("\r\nEntering MODEM Mode...");
+    modemMenu();
+    if (tcpServerPort > 0) tcpServer.begin();
+  
+    WiFi.mode(WIFI_STA);
+    connectWiFi();
+    sendResult(R_OK);
+    //tcpServer(tcpServerPort); // can't start tcpServer inside a function-- must live outside
+  
+    digitalWrite(LED_PIN, LOW); // on
+  
+    webServer.on("/", handleRoot);
+    webServer.on("/ath", handleWebHangUp);
+    webServer.begin();
+    mdns.begin("C64WiFi", WiFi.localIP());
 }
 
 void mainLoop()
@@ -1596,21 +1638,7 @@ void mainLoop()
     {
       if (chr=='M'||chr=='m'||menuSel==0) //enter modem mode
       {
-        Serial.println("\r\nEntering MODEM Mode...");
-        modemMenu();
-        if (tcpServerPort > 0) tcpServer.begin();
-      
-        WiFi.mode(WIFI_STA);
-        connectWiFi();
-        sendResult(R_OK);
-        //tcpServer(tcpServerPort); // can't start tcpServer inside a function-- must live outside
-      
-        digitalWrite(LED_PIN, LOW); // on
-      
-        webServer.on("/", handleRoot);
-        webServer.on("/ath", handleWebHangUp);
-        webServer.begin();
-        mdns.begin("C64WiFi", WiFi.localIP());
+        enterModemMode();
       }
       else if (chr=='F'||chr=='f'||menuSel==1)
       {
@@ -1689,14 +1717,14 @@ void baudLoop()
   } else if (serAvl>0) {
     if (chr>=48 && chr <=57) //between 0-9
     {
-      serialspeed = chr-48;  
+      serialspeed = chr-48;
       writeSettings();
       Serial.end();
       delay(200);
       Serial.begin(bauds[serialspeed]);
       settingsMenu(false);
     } else
-      baudMenu(false);    
+      baudMenu(false);
   }
 }
 
@@ -1755,6 +1783,54 @@ void orientationLoop()
   }
 }
 
+void defaultModeLoop()
+{
+  int menuSel=-1;
+  readSwitches();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      defaultModeMenu(true);
+  }
+  else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
+    defaultModeMenu(true);
+  }
+  else if (SW3) { //ENTER
+    menuSel = menuIdx;
+  }
+  else if (SW4) { //BACK
+    settingsMenu(false);
+  }
+  waitSwitches();
+  
+  int serAvl = Serial.available();
+  char chr;
+  if (serAvl>0) {
+    chr = Serial.read();
+    Serial.print(chr);
+  }
+
+  if (serAvl>0 || menuSel>-1)
+  {
+    if (chr=='0')
+      menuSel=0;
+    else if (chr=='1')
+      menuSel=1;
+      
+    if (menuSel>-1)
+    {
+      defaultMode = menuSel;
+      writeSettings();
+      settingsMenu(false);
+    }
+    else
+      defaultModeMenu(false);
+  }
+}
 
 void settingsLoop()
 {
@@ -1798,20 +1874,24 @@ void settingsLoop()
     {
       orientationMenu(false);
     }
-    else if (chr=='F'||chr=='f'||menuSel==3)
+    else if (chr=='D'||chr=='d'||menuSel==3)
+    {
+      defaultModeMenu(false);
+    }
+    else if (chr=='F'||chr=='f'||menuSel==4)
     {
        Serial.println("** PLEASE WAIT: FACTORY RESET **");
        showMessage("***************\n* PLEASE WAIT *\n*FACTORY RESET*\n***************");
        defaultEEPROM();
        resetFunc();
     }
-    else if (chr=='R'||chr=='r'||menuSel==4)
+    else if (chr=='R'||chr=='r'||menuSel==5)
     {
       Serial.println("** PLEASE WAIT: REBOOTING **");
       showMessage("***************\n* PLEASE WAIT *\n*  REBOOTING  *\n***************");
       resetFunc();
     }    
-    else if (chr=='A'||chr=='a'||menuSel==5)
+    else if (chr=='A'||chr=='a'||menuSel==6)
     {
       Serial.println("** WiRSa BUILD: " + build + " **");
       showMessage("***************\n* WiRSa BUILD *\n*    " + build + "    *\n***************");
@@ -1825,37 +1905,32 @@ void settingsLoop()
 
 void playbackMenu(bool arrow) {
   menuMode = MODE_PLAYBACK;
-  showMenu("PLAYBACK", playbackMenuDisp, 6, (arrow?MENU_DISP:MENU_BOTH));
+  showMenu("PLAYBACK", playbackMenuDisp, 6, (arrow?MENU_DISP:MENU_BOTH), 0);
 }
 
 void settingsMenu(bool arrow) {
   menuMode = MODE_SETTINGS;
-  showMenu("SETTINGS", settingsMenuDisp, 6, (arrow?MENU_DISP:MENU_BOTH));
+  showMenu("SETTINGS", settingsMenuDisp, 7, (arrow?MENU_DISP:MENU_BOTH), 0);
 }
 
 void orientationMenu(bool arrow) {
   menuMode = MODE_ORIENTATION;
-  /*bool setDflt = (lastMenu != menuMode);
-  if (setDflt) {
-    menuIdx = dispOrientation;
-    lastMenu = menuMode;
-  }*/
-  showMenu("SCREEN", orientationMenuDisp, 2, (arrow?MENU_DISP:MENU_BOTH));
+  showMenu("SCREEN", orientationMenuDisp, 2, (arrow?MENU_DISP:MENU_BOTH), dispOrientation);
+}
+
+void defaultModeMenu(bool arrow) {
+  menuMode = MODE_DEFAULTMODE;
+  showMenu("DEFAULT", defaultModeDisp, 2, (arrow?MENU_DISP:MENU_NUM), defaultMode);
 }
 
 void baudMenu(bool arrow) {
   menuMode = MODE_SETBAUD;
-  bool setDflt = (lastMenu != menuMode);
-  if (setDflt) {
-    menuIdx = serialspeed;
-    lastMenu = menuMode;
-  }
-  showMenu("SET BAUD", baudDisp, 9, (arrow?MENU_DISP:MENU_NUM));
+  showMenu("SET BAUD", baudDisp, 9, (arrow?MENU_DISP:MENU_NUM), serialspeed);
 }
 
 void fileMenu(bool arrow) {
   menuMode = MODE_FILE;
-  showMenu("FILE XFER", fileMenuDisp, 4, (arrow?MENU_DISP:MENU_BOTH));
+  showMenu("FILE XFER", fileMenuDisp, 4, (arrow?MENU_DISP:MENU_BOTH), 0);
 }
 
 void fileLoop()
@@ -2680,12 +2755,12 @@ void listFilesMenu(bool arrow) {
   }
   root.close();
 
-  showMenu("FILE LIST", files, c, (arrow?MENU_DISP:MENU_NUM));
+  showMenu("FILE LIST", files, c, (arrow?MENU_DISP:MENU_NUM), 0);
 }
 
 void modemMenu() {
   menuMode = MODE_MODEM;
-  showMenu("DIAL LIST", speedDials, 10, MENU_DISP);
+  showMenu("DIAL LIST", speedDials, 10, MENU_DISP, 0);
 }
 
 void modemLoop()
