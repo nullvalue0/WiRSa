@@ -90,7 +90,7 @@
 #define BUSY_MSG_ADDRESS 700
 #define BUSY_MSG_LEN    80
 #define ORIENTATION_ADDRESS 780
-#define defaultMode_ADDRESS 790
+#define DEFAULTMODE_ADDRESS 790
 #define LAST_ADDRESS    800
 
 #define SWITCH_PIN 0       // GPIO0 (programmind mode pin)
@@ -262,7 +262,7 @@ void writeSettings() {
   EEPROM.write(FLOW_CONTROL_ADDRESS, byte(flowControl));
   EEPROM.write(PIN_POLARITY_ADDRESS, byte(pinPolarity));
   EEPROM.write(ORIENTATION_ADDRESS, byte(dispOrientation));
-  EEPROM.write(defaultMode_ADDRESS, byte(defaultMode));
+  EEPROM.write(DEFAULTMODE_ADDRESS, byte(defaultMode));
   
   for (int i = 0; i < 10; i++) {
     setEEPROM(speedDials[i], speedDialAddresses[i], 50);
@@ -285,7 +285,7 @@ void readSettings() {
   flowControl = EEPROM.read(FLOW_CONTROL_ADDRESS);
   pinPolarity = EEPROM.read(PIN_POLARITY_ADDRESS);
   dispOrientation = EEPROM.read(ORIENTATION_ADDRESS);
-  defaultMode = EEPROM.read(defaultMode_ADDRESS);
+  defaultMode = EEPROM.read(DEFAULTMODE_ADDRESS);
 
   for (int i = 0; i < 10; i++) {
     speedDials[i] = getEEPROM(speedDialAddresses[i], 50);
@@ -325,7 +325,7 @@ void defaultEEPROM() {
   setEEPROM("SORRY, SYSTEM IS CURRENTLY BUSY. PLEASE TRY AGAIN LATER.", BUSY_MSG_ADDRESS, BUSY_MSG_LEN);
 
   EEPROM.write(ORIENTATION_ADDRESS, 0x00);
-  EEPROM.write(defaultMode_ADDRESS, 0x00);
+  EEPROM.write(DEFAULTMODE_ADDRESS, 0x00);
   EEPROM.commit();
 }
 
