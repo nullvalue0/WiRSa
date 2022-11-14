@@ -113,10 +113,14 @@
 #define MODE_LISTFILE 6
 #define MODE_ORIENTATION 7
 #define MODE_DEFAULTMODE 8
+#define MODE_PROTOCOL 9
 
 #define MENU_BOTH 0 //show menu on both serial port & display using first letter as selector
 #define MENU_NUM  1 //show menu on both serial port & display but serial uses a numeric selector - has a limit of 10 items because the input currently returns after 1 character entry
 #define MENU_DISP 2 //show menu on display only
+
+#define XFER_SEND 0
+#define XFER_RECV 1
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -126,7 +130,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 // Global variables
-String build = "v2.02";
+String build = "v2.03";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -156,12 +160,8 @@ String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Playback Text", "Setti
 String settingsMenuDisp[] = { "MAIN", "Baud Rate", "Screen", "Default Menu", "Factory Reset", "Reboot", "About" };
 String orientationMenuDisp[] = { "Normal", "Flipped" };
 String playbackMenuDisp[] = { "MAIN", "List Files", "Display File", "Playback File", "Evaluate Key", "Terminal Mode" };
-String fileMenuDisp[] = { "MAIN", 
-                          //"Upload YM - to SD)", 
-                          //"Download YM-from SD", 
-                          "List Files on SD", 
-                          "Send (from SD)", 
-                          "Recieve (to SD)" };
+String fileMenuDisp[] = { "MAIN", "List Files on SD", "Send (from SD)", "Recieve (to SD)" };
+String protocolMenuDisp[] = { "BACK", "Raw", "XModem", "YModem", "ZModem", "Kermit" };
 String defaultModeDisp[] = { "Main Menu", "MODEM Mode" };
                           
 byte serialspeed;
@@ -185,6 +185,7 @@ enum defaultMode_t { D_MAINMENU, D_MODEMMENU }; // Normal or Flipped
 byte defaultMode = D_MAINMENU;
 
 int menuMode = MODE_MAIN;
+int xferMode = XFER_SEND;
 int lastMenu = -1;
 int menuCnt = 0;
 int menuIdx = 0;
@@ -1583,6 +1584,8 @@ void loop()
     orientationLoop();
   else if (menuMode==MODE_DEFAULTMODE)
     defaultModeLoop();
+  else if (menuMode==MODE_PROTOCOL)
+    protocolLoop();
 }
 
 void enterModemMode()
@@ -1923,6 +1926,11 @@ void defaultModeMenu(bool arrow) {
   showMenu("DEFAULT", defaultModeDisp, 2, (arrow?MENU_DISP:MENU_NUM), defaultMode);
 }
 
+void protocolMenu(bool arrow) {
+  menuMode = MODE_PROTOCOL;
+  showMenu("PROTOCOL", protocolMenuDisp, 6, (arrow?MENU_DISP:MENU_BOTH), 0);
+}
+
 void baudMenu(bool arrow) {
   menuMode = MODE_SETBAUD;
   showMenu("SET BAUD", baudDisp, 9, (arrow?MENU_DISP:MENU_NUM), serialspeed);
@@ -1957,22 +1965,18 @@ void fileLoop()
   }
   waitSwitches();
 
-  if (Serial.available() || menuSel>-1)
-  {
-    char chr = Serial.read();
+  int serAvl = Serial.available();
+  char chr;
+  if (serAvl>0) {
+    chr = Serial.read();
     Serial.print(chr);
-    
+  }
+
+  if (serAvl>0 || menuSel>-1)
+  {    
     if (chr=='M'||chr=='m'||menuSel==0) //main menu
     {
       mainMenu(false);
-    }
-    else if (chr=='U'||chr=='u') //upload file
-    {
-      uploadFile();
-    }
-    else if (chr=='D'||chr=='d') //download file
-    {
-      downloadFile();
     }
     else if (chr=='L'||chr=='l') //list files
     {
@@ -1982,16 +1986,120 @@ void fileLoop()
     {
       listFilesMenu(false);
     }
-    else if (chr=='S'||chr=='s') //send pipe mode
+    else if (chr=='S'||chr=='s'||menuSel==2) //send file (from SD)
+    {
+      xferMode = XFER_SEND;
+      protocolMenu(false);
+    }
+    else if (chr=='R'||chr=='r'||menuSel==3) //receive file (to SD)
+    {
+      xferMode = XFER_RECV;
+      protocolMenu(false);
+    }
+    else if (chr=='G'||chr=='g') //print out the logfile
+    {
+      Serial.println("\r\n\r\nTransfer Log:");
+      logFile = SD.open("logfile.txt");
+      if (logFile) {
+        while (logFile.available()) {
+          Serial.write(logFile.read());
+        }
+        logFile.close();
+      } else
+        Serial.println("Unable to open log file");
+    }
+    /*else if (chr=='S'||chr=='s') //send pipe mode
     {
       sendPipeMode();
     }
     else if (chr=='R'||chr=='r') //receive pipe mode
     {
       receivePipeMode();
-    }    
+    }*/   
     else {
       fileMenu(false);
+    }
+  }
+}
+
+void protocolLoop()
+{
+  int menuSel=-1;
+  readSwitches();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      protocolMenu(true);
+  }
+  else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
+    protocolMenu(true);
+  }
+  else if (SW3) { //ENTER
+    menuSel = menuIdx;
+  }
+  else if (SW4) { //BACK
+    mainMenu(false);
+  }
+  waitSwitches();
+
+  int serAvl = Serial.available();
+  char chr;
+  if (serAvl>0) {
+    chr = Serial.read();
+    Serial.print(chr);
+  }
+
+  if (serAvl>0 || menuSel>-1)
+  {    
+    if (chr=='B'||chr=='b'||menuSel==0) //main menu
+    {
+      fileMenu(false);
+    }
+    else if (chr=='R'||chr=='r'||menuSel==1) //Raw Mode
+    {
+      if (xferMode == XFER_SEND)
+        sendFileRaw();
+      else if (xferMode == XFER_RECV)
+        receiveFileRaw();
+    }
+    else if (chr=='X'||chr=='x'||menuSel==2) //XMODEM
+    {
+      if (xferMode == XFER_SEND)
+        sendFileXMODEM();
+      //else if (xferMode == XFER_RECV)
+        //receiveFileXMODEM();
+    }
+    else if (chr=='Y'||chr=='y'||menuSel==3) //YMODEM
+    {
+      if (xferMode == XFER_SEND)
+        sendFileYMODEM();
+      else if (xferMode == XFER_RECV)
+        receiveFileYMODEM();
+    }
+    else if (chr=='Z'||chr=='z'||menuSel==4) //ZMODEM
+    {
+      showMessage("NOT YET\nIMPLEMENTED");
+      Serial.println("NOT YET IMPLEMENTED");
+      /*if (xferMode == XFER_SEND)
+        sendFileZMODEM();
+      else if (xferMode == XFER_RECV)
+        receiveFileZMODEM();*/
+    }
+    else if (chr=='K'||chr=='k'||menuSel==5) //KERMIT
+    {
+      showMessage("NOT YET\nIMPLEMENTED");
+      Serial.println("NOT YET IMPLEMENTED");
+      /*if (xferMode == XFER_SEND)
+        sendFileKERMIT();
+      else if (xferMode == XFER_RECV)
+        receiveFileKERMIT();*/
+    }
+    else {
+      protocolMenu(false);
     }
   }
 }
@@ -2078,11 +2186,12 @@ String prompt(String msg, String dflt="")
   return resp;
 }
 
-void downloadFile()
+void sendFileXMODEM()
 {
   resetGlobals();
-  fileName=prompt("Please enter the filename: ");
-  Serial.println("Downloading " + fileName);
+  packetNumber = 1;
+  fileName=prompt("Please enter the filename to send: ");
+  Serial.println("Sending " + fileName);
   Serial.println("WAITING FOR TRANSFER START...");
   SD.remove("logfile.txt");
   //if (!logFile)
@@ -2091,7 +2200,7 @@ void downloadFile()
     
   if (dataFile) { //make sure the file is valid
     String fileSize = getFileSize(fileName);
-    downloadLoop(dataFile, fileName, fileSize);
+    sendLoopXMODEM(dataFile, fileName, fileSize);
     Serial.println("Download Complete");
     dataFile.close();
   } else {
@@ -2099,7 +2208,28 @@ void downloadFile()
   }
 }
 
-void sendPipeMode()
+void sendFileYMODEM()
+{
+  resetGlobals();
+  fileName=prompt("Please enter the filename to send: ");
+  Serial.println("Sending " + fileName);
+  Serial.println("WAITING FOR TRANSFER START...");
+  SD.remove("logfile.txt");
+  //if (!logFile)
+    //Serial.println("Couldn't open log file");
+  File dataFile = SD.open(fileName);
+    
+  if (dataFile) { //make sure the file is valid
+    String fileSize = getFileSize(fileName);
+    sendLoopYMODEM(dataFile, fileName, fileSize);
+    Serial.println("Download Complete");
+    dataFile.close();
+  } else {
+    Serial.println("Invalid File");
+  }
+}
+
+void sendFileRaw()
 {
   digitalWrite(LED_PIN, HIGH);
   resetGlobals();
@@ -2140,7 +2270,7 @@ void sendPipeMode()
   }
 }
 
-void receivePipeMode()
+void receiveFileRaw()
 {
   fileName=prompt("Please enter the filename: ");
   xferFile = SD.open(fileName, FILE_WRITE);
@@ -2158,7 +2288,65 @@ void receivePipeMode()
   xferFile.close();
 }
 
-void downloadLoop(File dataFile, String fileName, String fileSize)
+void sendLoopXMODEM(File dataFile, String fileName, String fileSize)
+{
+  bool forceStart=false;
+  
+  while(true)
+  {
+    //readSwitches();
+    //if (SW3 && packetNumber==1) {
+    //  waitSwitches();
+    //  forceStart=true;
+    //}
+    if (Serial.available() > 0 || forceStart) {
+      char c = Serial.read();
+      if (forceStart)
+        c=0x15; //NAK will start the transfer
+        
+      addLog("< " + String(c, HEX) + "\r\n");
+      switch (c)
+      {
+        case 0x06: //ACK
+          if (lastPacket)
+          {
+            serialWrite(0x04, "EOT after last packet " + String(eotSent)); //EOT
+            eotSent++;
+            if (eotSent==2)
+              return;
+          }
+          else
+          {
+            packetNumber++;
+            addLog("packetNumber: " + String(packetNumber));
+            addLog("sending packet after ACK");
+            sendPacket(dataFile);
+          }
+          break;
+        case 0x15: //NAK
+          blockSize = 128;
+        case 0x43: //'C'
+          //Serial.println("NAK");
+          if (lastPacket)
+          {
+              serialWrite(0x04, "EOT after last packet " + String(eotSent)); //EOT
+              //Serial.println("EOT");
+              eotSent++;
+              if (eotSent==2)
+                return;
+          }
+          else
+          {
+            addLog("Sending Packet after C");
+            sendPacket(dataFile);
+          }
+          break;
+      }
+    }
+  }
+}
+
+void sendLoopYMODEM(File dataFile, String fileName, String fileSize)
 {
   while(true)
   {
@@ -2411,7 +2599,7 @@ void sendTelnet(byte packet[], int sz)
   String logmsg = "";
   for (int i=0; i<sz; i++)
   {
-    logmsg = "P#" + String(packetNumber) + " b#" + String(i);
+    //logmsg = "P#" + String(packetNumber) + " b#" + String(i);
     
     if (packet[i] == 0xFF && EscapeTelnet)
       serialWrite(0xFF, "escaping FF");
@@ -2421,7 +2609,7 @@ void sendTelnet(byte packet[], int sz)
   Serial.flush();
 }
 
-void uploadFile()
+void receiveFileYMODEM()
 {
   SD.remove("logfile.txt");
 
@@ -2431,7 +2619,7 @@ void uploadFile()
   Serial.println("");
   Serial.println("");
   Serial.println("TRANSFER WILL BEGIN IN 20 SECONDS OR ON ANY KEY...");
-  uploadLoop();
+  receiveLoopYMODEM();
   xferFile.flush();
   xferFile.close();
   clearInputBuffer();
@@ -2458,7 +2646,7 @@ bool sendStartByte(void *)
   }
 }
 
-void uploadLoop()
+void receiveLoopYMODEM()
 {
   LinkedList<char> buffer = LinkedList<char>();  
   bool lastByteIAC = false;
