@@ -130,7 +130,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 // Global variables
-String build = "v2.03";
+String build = "v2.04";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -229,7 +229,6 @@ ESP8266WebServer webServer(80);
 MDNSResponder mdns;
 
 void(* resetFunc) (void) = 0; //declare reset function @ address 0
-
 
 String connectTimeString() {
   unsigned long now = millis();
@@ -2071,8 +2070,8 @@ void protocolLoop()
     {
       if (xferMode == XFER_SEND)
         sendFileXMODEM();
-      //else if (xferMode == XFER_RECV)
-        //receiveFileXMODEM();
+      else if (xferMode == XFER_RECV)
+        receiveFileXMODEM();
     }
     else if (chr=='Y'||chr=='y'||menuSel==3) //YMODEM
     {
@@ -2103,6 +2102,15 @@ void protocolLoop()
       protocolMenu(false);
     }
   }
+}
+
+bool checkCancel() {
+  Serial.println("checking..");
+  readBackSwitch();
+  bool cncl = SW4;
+  //Serial.println("SW4: " + SW4);
+  waitBackSwitch();
+  return cncl;
 }
 
 void listFilesLoop()
@@ -2162,7 +2170,7 @@ void serialWrite(char c, String log)
 {
   if (log!="")
     addLog("> [" + log + "] 0x" + String(c, HEX) + " " + String(c) + "\r\n");
-  Serial.write(c);
+  Serial.write(c); 
 }
 
 void addLog(String logmsg)
@@ -2276,7 +2284,7 @@ void receiveFileRaw()
   fileName=prompt("Please enter the filename: ");
   xferFile = SD.open(fileName, FILE_WRITE);
   while (true)
-  {    
+  {
     if (Serial.available() > 0) {
       char c = Serial.read();
       if (c==27)
@@ -2610,6 +2618,24 @@ void sendTelnet(byte packet[], int sz)
   Serial.flush();
 }
 
+void receiveFileXMODEM()
+{
+  SD.remove("logfile.txt");
+  Serial.println("");
+  Serial.println("");
+  fileName=prompt("Please enter the filename to receive: ");
+
+  SD.remove(fileName);
+  xferFile = SD.open(fileName, FILE_WRITE);
+  Serial.println("TRANSFER WILL BEGIN IN 20 SECONDS OR ON ANY KEY...");
+  receiveLoopXMODEM();
+  
+  xferFile.flush();
+  xferFile.close();
+  clearInputBuffer();
+  Serial.println("Download Complete");
+}
+
 void receiveFileYMODEM()
 {
   SD.remove("logfile.txt");
@@ -2637,13 +2663,142 @@ void clearInputBuffer()
 
 bool sendStartByte(void *)
 {
-  if (packetNumber>0)
+  //if (packetNumber>0)
+  if (packetNumber>1)
     return false;
   else
   {
     serialWrite(0x43, "Sending Start C from Timer"); //letter C
     readyToReceive = true;
     return true;
+  }
+}
+
+void receiveLoopXMODEM()
+{
+  LinkedList<char> buffer = LinkedList<char>();  
+  resetGlobals();
+  packetNumber=1;
+
+  timer.every(20000, sendStartByte);
+
+  while (true)
+  {    
+    timer.tick();
+
+    if (Serial.available() > 0) {
+      char c = Serial.read();
+
+      //addLog("RCV: " + String(c, HEX) + " " + String(c));
+
+      if (!readyToReceive)
+      {
+        //we got something so maybe client is ready to send? clear the incoming buffer,
+        //wait and send a C to indicate I'm ready to receive
+        //timer.Enabled = false;
+        timer.cancel();
+        delay(100); //wait for anything else incoming
+        clearInputBuffer();
+        //delay(2000); //wait a bit
+        serialWrite(0x43, "Sending C to start transfer"); //'C'
+        readyToReceive = true;
+      }
+      else
+      {
+        if (buffer.size() == 0 && c == 0x04) //EOT
+        {
+          //received EOT on its own - transmission is complete, send ACK and return the file
+          serialWrite(0x06, "ACK after EOT"); //ACK              
+          return;
+        }
+        else
+        {
+          buffer.add(c);
+
+          //if we've hit the expected packet size
+          bool processPacket = false;
+          if (buffer.size() == packetSize && (buffer.get(0) == 0x02))
+          {
+            processPacket = true;
+            blockSize = 1024;
+            packetSize = 1029;
+          }
+          else if (buffer.size() == 133 && buffer.get(0) == 0x01)
+          {
+            //even though we're in 1K mode, I still have to process 128-byte packets
+            addLog("buffer.get(0): " + String(buffer.get(0)));
+            addLog("buffer.get(1): " + String(buffer.get(1)));
+            processPacket = true;
+            blockSize = 128;
+            packetSize = 133;
+          }
+    
+          if (processPacket)
+          {
+            addLog(String(buffer.size()) + " Process now");
+            if (processPacket)
+            {
+              bool goodPacket = false;
+              //verify the packet number matches what's expected
+              if (buffer.get(1) == packetNumber)
+              {
+                //check the inverse for good measure
+                if (buffer.get(2) == 255 - packetNumber)
+                {
+                  //get the CRC for the packet's data
+                  crc.reset();
+                  crc.setPolynome(0x1021);
+                  for (int i = 3; i < packetSize-2; i++)
+                  {
+                    crc.add(buffer.get(i));
+                  }
+                  uint16_t c = crc.getCRC();
+                  uint8_t hi = (char)(c >> 8); // Shift 8 bytes -> tell get dropped
+                  uint8_t lo = (char)(c & 0xFF); // Only last Byte is left
+      
+                  //compare it to the received CRC - upper byte first
+                  addLog("hi CRC: " + String(hi) + " " + buffer.get(packetSize - 2));
+                  if (hi == buffer.get(packetSize - 2))
+                  {
+                    addLog("lo CRC: " + String(lo) + " " + buffer.get(packetSize - 1));
+                    //and then compare the lower byte
+                    if (lo == buffer.get(packetSize - 1))
+                    {
+                      goodPacket = true; //mark as a good packet so we send ACK below
+                      //since it's good, add this packet to the file
+                      for (int i = 3; i < packetSize - 2; i++)
+                      {
+                          xferFile.write(buffer.get(i));
+                      }
+                      xferFile.flush();
+                      buffer.clear(); //clear the input buffer to get ready for next pack
+                    }
+                    else
+                      addLog("Bad CRC (lower byte)");
+                  }
+                  else
+                    addLog("Bad CRC (upper byte)");
+                }
+                else
+                  addLog("Wrong inverse packet number");
+              }
+              else {
+                addLog("Wrong packet number, expected ");
+                addLog(String(packetNumber, HEX));
+                addLog(" got ");
+                addLog(String(buffer.get(1), HEX));
+              }
+              if (goodPacket)
+              {
+                addLog("\nGood packet, sending ACK");
+                packetNumber++; //expect the next packet
+                serialWrite(0x06, "ACK after good packet"); //ACK
+              }              
+            }
+          }
+        }
+      }
+    }
   }
 }
 
@@ -3325,6 +3480,8 @@ String getLine()
   char c;
   while (true)
   {
+    //if (checkCancel)
+      //return "";
     if (Serial.available() > 0)
     {
       c = Serial.read();
