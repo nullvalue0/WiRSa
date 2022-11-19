@@ -130,7 +130,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 // Global variables
-String build = "v2.04";
+String build = "v2.05";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -191,6 +191,9 @@ int menuCnt = 0;
 int menuIdx = 0;
 int dispCharCnt = 0;
 int dispLineCnt = 0;
+unsigned long xferBytes = 0;
+unsigned int xferBlock = 0;
+String xferMsg = "";
 
 //file transfer related variables
 const int chipSelect = D8;
@@ -211,6 +214,7 @@ auto timer = timer_create_default();
 String terminalMode = "VT100";
 String fileName = "";
 String files[100];
+String waitTime;
 bool msgFlag=false;
 bool SW1=false;
 bool SW2=false;
@@ -766,6 +770,15 @@ void showMessage(String message) {
   display.setTextColor(SSD1306_WHITE);
   display.display();
   msgFlag=true;
+}
+
+void updateXferMessage() {
+  xferBytes++;
+  xferBlock++;
+  if (xferBytes==0 || xferBlock==1024) {
+    xferBlock=0;
+    showMessage(xferMsg + String(xferBytes));
+  }
 }
 
 void showMenu(String menuName, String options[], int sz, int dispMode, int defaultSel) {
@@ -2042,7 +2055,7 @@ void protocolLoop()
     menuSel = menuIdx;
   }
   else if (SW4) { //BACK
-    mainMenu(false);
+    fileMenu(false);
   }
   waitSwitches();
 
@@ -2105,10 +2118,8 @@ void protocolLoop()
 }
 
 bool checkCancel() {
-  Serial.println("checking..");
   readBackSwitch();
   bool cncl = SW4;
-  //Serial.println("SW4: " + SW4);
   waitBackSwitch();
   return cncl;
 }
@@ -2164,12 +2175,14 @@ void resetGlobals()
   packetSize = 1029;
   finalFileSent = false;
   fileIndex = 0;
+  xferBytes = 0;
 }
 
 void serialWrite(char c, String log)
 {
   if (log!="")
     addLog("> [" + log + "] 0x" + String(c, HEX) + " " + String(c) + "\r\n");
+  updateXferMessage();
   Serial.write(c); 
 }
 
@@ -2188,6 +2201,7 @@ String prompt(String msg, String dflt="")
   Serial.print(msg);
   if (dflt!="")
     Serial.print("[" + dflt + "] ");
+  showMessage("{SERIAL}\n"+msg);
   String resp = getLine();
   if (resp=="")
     resp = dflt;
@@ -2206,8 +2220,8 @@ void sendFileXMODEM()
   //if (!logFile)
     //Serial.println("Couldn't open log file");
   File dataFile = SD.open(fileName);
-    
   if (dataFile) { //make sure the file is valid
+    xferMsg = "SENDING XMODEM\nBytes Sent:\n";
     String fileSize = getFileSize(fileName);
     sendLoopXMODEM(dataFile, fileName, fileSize);
     Serial.println("Download Complete");
@@ -2227,8 +2241,8 @@ void sendFileYMODEM()
   //if (!logFile)
     //Serial.println("Couldn't open log file");
   File dataFile = SD.open(fileName);
-    
   if (dataFile) { //make sure the file is valid
+    xferMsg = "SENDING YMODEM\nBytes Sent:\n";
     String fileSize = getFileSize(fileName);
     sendLoopYMODEM(dataFile, fileName, fileSize);
     Serial.println("Download Complete");
@@ -2245,8 +2259,9 @@ void sendFileRaw()
   fileName=prompt("Please enter the filename: ");
   File dataFile = SD.open(fileName);
   if (dataFile) { //make sure the file is valid
+    xferMsg = "SENDING RAW\nBytes Sent:\n";
     String fileSize = getFileSize(fileName);
-    String waitTime = prompt("Start time in seconds: ", "30");  
+    waitTime = prompt("Start time in seconds: ", "30");  
     Serial.println("\r\nStarting transfer in " + waitTime + " seconds...");
     digitalWrite(LED_PIN, LOW);
     delay(waitTime.toInt()*1000);
@@ -2283,18 +2298,25 @@ void receiveFileRaw()
 {
   fileName=prompt("Please enter the filename: ");
   xferFile = SD.open(fileName, FILE_WRITE);
-  while (true)
-  {
-    if (Serial.available() > 0) {
-      char c = Serial.read();
-      if (c==27)
-        break;
-      else
-        xferFile.write(c);
+  if (xferFile) {
+    xferMsg = "RECEIVE RAW\nBytes Recevied:\n";
+    while (true)
+    {
+      if (Serial.available() > 0) {
+        char c = Serial.read();
+        if (c==27)
+          break;
+        else
+        {
+          updateXferMessage();
+          xferFile.write(c);
+        }
+      }
     }
-  }
-  xferFile.flush();
-  xferFile.close();
+    xferFile.flush();
+    xferFile.close();
+  } else
+    Serial.println("Transfer Cancelled");
 }
 
 void sendLoopXMODEM(File dataFile, String fileName, String fileSize)
@@ -2627,25 +2649,28 @@ void receiveFileXMODEM()
 
   SD.remove(fileName);
   xferFile = SD.open(fileName, FILE_WRITE);
-  Serial.println("TRANSFER WILL BEGIN IN 20 SECONDS OR ON ANY KEY...");
-  receiveLoopXMODEM();
-  
-  xferFile.flush();
-  xferFile.close();
-  clearInputBuffer();
-  Serial.println("Download Complete");
+  if (xferFile) {
+    xferMsg = "RECEIVE XMODEM\nBytes Recevied:\n";
+    waitTime = prompt("Start time in seconds: ", "30");  
+    Serial.println("\r\nStarting transfer in " + waitTime + " seconds...");
+    receiveLoopXMODEM();
+    
+    xferFile.flush();
+    xferFile.close();
+    clearInputBuffer();
+    Serial.println("Download Complete");
+  } else
+    Serial.println("Transfer Cancelled");
 }
 
 void receiveFileYMODEM()
 {
   SD.remove("logfile.txt");
-
-  //logFile = SD.open("logfile.txt", FILE_WRITE);
-  //logFile.flush();
-  //logFile.close();
+  xferMsg = "RECEIVE YMODEM\nBytes Recevied:\n";
   Serial.println("");
   Serial.println("");
-  Serial.println("TRANSFER WILL BEGIN IN 20 SECONDS OR ON ANY KEY...");
+  waitTime = prompt("Start time in seconds: ", "30");  
+  Serial.println("\r\nStarting transfer in " + waitTime + " seconds...");
   receiveLoopYMODEM();
   xferFile.flush();
   xferFile.close();
@@ -2680,7 +2705,7 @@ void receiveLoopXMODEM()
   resetGlobals();
   packetNumber=1;
 
-  timer.every(20000, sendStartByte);
+  timer.every(waitTime.toInt()*1000, sendStartByte);
 
   while (true)
   {    
@@ -2713,6 +2738,7 @@ void receiveLoopXMODEM()
         }
         else
         {
+          updateXferMessage();
           buffer.add(c);
 
           //if we've hit the expected packet size
@@ -2812,7 +2838,7 @@ void receiveLoopYMODEM()
   unsigned int fileSizeNum=0;
   unsigned int bytesWritten=0;
 
-  timer.every(20000, sendStartByte);
+  timer.every(waitTime.toInt()*1000, sendStartByte);
 
   int XCount=0;
 
@@ -2848,6 +2874,7 @@ void receiveLoopYMODEM()
       }
       else
       {
+        updateXferMessage();
         if (buffer.size() == 0 && c == 0x04) //EOT
         {
           //received EOT on its own - transmission is complete, send ACK and return the file
@@ -3480,8 +3507,8 @@ String getLine()
   char c;
   while (true)
   {
-    //if (checkCancel)
-      //return "";
+    if (checkCancel())
+      return "";
     if (Serial.available() > 0)
     {
       c = Serial.read();
