@@ -125,12 +125,12 @@
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
-#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 // Global variables
-String build = "v2.05";
+String build = "v2.06";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -191,6 +191,7 @@ int menuCnt = 0;
 int menuIdx = 0;
 int dispCharCnt = 0;
 int dispLineCnt = 0;
+int dispAnsiCnt = 0;
 unsigned long xferBytes = 0;
 unsigned int xferBlock = 0;
 String xferMsg = "";
@@ -3167,7 +3168,15 @@ void modemLoop()
   } else if (SW3) { //ENTER
     dialOut("ATDS" + String(menuIdx));
   } else if (SW4) { //BACK
-    mainMenu(false);
+    //if in a call, first back push ends call, 2nd exits modem mode
+    if (cmdMode==true)
+      mainMenu(false);
+    else {
+      hangUp();
+      cmdMode = true;  
+      msgFlag=true; //force full menu redraw
+      modemMenu();
+    }
   }
   if (cmdMode == true)
     waitSwitches();
@@ -3177,7 +3186,6 @@ void modemLoop()
   /**** AT command mode ****/
   if (cmdMode == true)
   {
-
     // In command mode - don't exchange with TCP but gather characters to a string
     if (Serial.available())
     {
@@ -3370,7 +3378,9 @@ void modemLoop()
 }
 
 void displayChar(char chr) {
-  if (dispCharCnt>=168 ) {
+  if (dispCharCnt>=168) {
+    //only refresh the display for each new full screen of characters
+    display.display();
     dispCharCnt=0;
     dispLineCnt=0;
     display.clearDisplay();
@@ -3379,13 +3389,21 @@ void displayChar(char chr) {
   if (chr==10) {
     dispCharCnt+=21-dispLineCnt;
     dispLineCnt=0;
+  } else if (chr==27) { 
+    //throw out the next 2 characters...this isn't right but i'll improve later
+    dispAnsiCnt = 1;
+    return;
+  } else if (dispAnsiCnt>0 && dispAnsiCnt<=3) {
+    dispAnsiCnt++;
+    return;
   } else {
+    dispAnsiCnt=0;
     dispCharCnt++;
     if (dispLineCnt>=21)
       dispLineCnt=0;
     dispLineCnt++;
   }
-  display.write(chr); display.display(); yield();
+  display.write(chr);
 }
 
 void changeTerminalMode()
@@ -3473,10 +3491,28 @@ bool displayFile(String filename, bool playback_mode, int begin_position)
 
 void evalKey()
 {
-  Serial.print("Press Key: ");
-  char c = getKey();
-  Serial.print("CODE=");
-  Serial.println(c, DEC);
+  Serial.print("Press Key (repeat same key 3 times to exit): ");
+  Serial.println("\n");
+  Serial.println("DEC\tHEX\tCHR");
+  char lastKey;
+  int lastCnt=0;
+  while(1) {
+    char c = getKey();
+    Serial.print(c, DEC);
+    Serial.print("\t");
+    Serial.print(c, HEX);
+    Serial.print("\t");
+    Serial.println(c);
+    if (c==lastKey) {
+      lastCnt++;
+      if (lastCnt==2)
+        break;
+    } else {
+      lastCnt=0;
+      lastKey=c;
+    }
+  }
+  playbackMenu(false);
 }
 
 char getKey()
