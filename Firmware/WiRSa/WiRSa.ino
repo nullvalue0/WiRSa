@@ -42,6 +42,8 @@
 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClient.h>
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
 #include <LinkedList.h>
@@ -130,7 +132,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 // Global variables
-String build = "v2.06";
+String build = "v2.07";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -440,6 +442,7 @@ void connectWiFi() {
     Serial.print("IP ADDRESS: "); Serial.println(WiFi.localIP());
     updateLed();
     modemMenu();
+    firmwareCheck();
   }
 }
 
@@ -3133,6 +3136,36 @@ void listFilesMenu(bool arrow) {
 void modemMenu() {
   menuMode = MODE_MODEM;
   showMenu("DIAL LIST", speedDials, 10, MENU_DISP, 0);
+}
+
+void firmwareCheck() {
+  //http://update.retrodisks.com/wirsa-v2.php
+  //This works by checking the latest release tag on the hosted github page
+  //I have to call the github API page at https://api.github.com/repos/nullvalue0/WiRSa/releases/latest
+  //However the problem is this only works over SSL and returns a large result as JSON. Hitting SSL 
+  //pages from the ESP8266 is a lot of work, so to get around it a built a very simple PHP script that 
+  //I host on a plain HTTP site. It hits the github API endpoint over HTTPS, parses the JSON and just 
+  //returns the latest version string over HTTP as plain text - this way the ESP8266 can easily check 
+  //the latest version.
+  //TODO: Add OTA firmware update support
+
+  Serial.println("\nChecking firmware version..."); yield();
+  WiFiClient client;
+  HTTPClient http;
+  if (http.begin(client, "http://update.retrodisks.com/wirsa-v2.php")) {
+      int httpCode = http.GET();
+      if (httpCode == 200) {
+        http.getString();
+        String version = http.getString();
+        Serial.println("Latest Version: " + version + ", Device Version: " + build);
+        if (build!=version)
+          Serial.println("WiRSa firmware update available, download the latest release at https://github.com/nullvalue0/WiRSa");
+        else
+          Serial.println("Your WiRSa is running the latest firmware version.");
+      }
+      else
+        Serial.println("Firmware version check failed.");
+  }
 }
 
 void modemLoop()
