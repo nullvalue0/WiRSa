@@ -43,6 +43,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
+#include <ESP8266httpUpdate.h>
 #include <WiFiClient.h>
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
@@ -132,7 +133,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 // Global variables
-String build = "v2.07";
+String build = "v2.08";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -684,6 +685,8 @@ void displayHelp() {
   Serial.println("HANGUP.........: ATH"); yield();
   Serial.println("ENTER CMD MODE.: +++"); yield();
   Serial.println("EXIT CMD MODE..: ATO"); yield();
+  Serial.println("FIRMWARE CHECK.: ATFC"); yield();
+  Serial.println("FIRMWARE UPDATE: ATFU"); yield();
   Serial.println("EXIT MODEM MODE: ATX"); yield();
   Serial.println("QUERY MOST COMMANDS FOLLOWED BY '?'"); yield();
 }
@@ -1474,6 +1477,12 @@ void command()
     }
   }
 
+  else if (upCmd == "ATFC") {
+    firmwareCheck();
+  }
+  else if (upCmd == "ATFU") {
+    firmwareUpdate();
+  }
   else if (upCmd == "ATX") {
     mainMenu(false);
   }
@@ -3147,7 +3156,6 @@ void firmwareCheck() {
   //I host on a plain HTTP site. It hits the github API endpoint over HTTPS, parses the JSON and just 
   //returns the latest version string over HTTP as plain text - this way the ESP8266 can easily check 
   //the latest version.
-  //TODO: Add OTA firmware update support
 
   Serial.println("\nChecking firmware version..."); yield();
   WiFiClient client;
@@ -3159,7 +3167,7 @@ void firmwareCheck() {
         String version = http.getString();
         Serial.println("Latest Version: " + version + ", Device Version: " + build);
         if (build!=version)
-          Serial.println("WiRSa firmware update available, download the latest release at https://github.com/nullvalue0/WiRSa");
+          Serial.println("WiRSa firmware update available, download the latest release at https://github.com/nullvalue0/WiRSa or use commmand ATFU to apply updates now.");
         else
           Serial.println("Your WiRSa is running the latest firmware version.");
       }
@@ -3167,6 +3175,52 @@ void firmwareCheck() {
         Serial.println("Firmware version check failed.");
   }
 }
+
+void firmwareUpdate() {
+  //Similar to the firmware check, I have a proxy php script calls the github, gets the latest release 
+  //url, downloads the binary and forwards it over plain HTTP so the ESP8266 can download it and use
+  //it for OTA updates. These php scripts are in the github repository under the firmware folder.
+
+  WiFiClient client;
+
+  ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
+  ESPhttpUpdate.onStart(firmwareUpdateStarted);
+  ESPhttpUpdate.onEnd(firmwareUpdateFinished);
+  ESPhttpUpdate.onProgress(firmwareUpdateProgress);
+  ESPhttpUpdate.onError(firmwareUpdateError);
+
+  t_httpUpdate_return ret = ESPhttpUpdate.update(client, "http://update.retrodisks.com/wirsa-bin-v2.php");
+  switch (ret) {
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+      break;
+
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("HTTP_UPDATE_NO_UPDATES");
+      break;
+
+    case HTTP_UPDATE_OK:
+      Serial.println("HTTP_UPDATE_OK");
+      break;
+  }
+}
+
+void firmwareUpdateStarted() {
+  Serial.println("HTTP update process started");
+}
+
+void firmwareUpdateFinished() {
+  Serial.println("HTTP update process finished...\r\n\r\nPLEASE WAIT, APPLYING UPDATE - DEVICE WILL REBOOT ON IT'S OWN WHEN COMPLETE IN ABOUT 10 SECONDS\r\n\r\n");
+}
+
+void firmwareUpdateProgress(int cur, int total) {
+  Serial.printf("HTTP update process at %d of %d bytes...\r\n", cur, total);
+}
+
+void firmwareUpdateError(int err) {
+  Serial.printf("HTTP update fatal error code %\r\n", err);
+}
+
 
 void modemLoop()
 {  
