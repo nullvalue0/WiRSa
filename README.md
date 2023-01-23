@@ -6,6 +6,18 @@ This project is a Wifi - RS232 Serial adapter for getting vintage computers conn
 ## Kits & assembled units available for sale
 If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale. I had quite a few PCB's made up and I am trying to keep these as cheap as possible. If you're exploring your options, I think you'll find that I'm asking less than most of the other options out there. You can purchase on [eBay](https://www.ebay.com/itm/175299622202), [Tindie](https://www.tindie.com/products/retrodisks/wirsa-v2-wifi-rs232-serial-modem-adapter-with-sd) or directly through the [RetroDisks](https://retrodisks.com/en/home/43-61-wirsa-wifi-wireless-rs232-serial-adapter#/26-wirsa_options-fully_assembled_with_case) site.
 
+## Getting Started
+The first thing you probably want to do is try connecting to a BBS. Follow these steps to get connected to your wifi, save your settings and connect to a telnet BBS.
+1. Power on your WiRSa, and using the buttons and menu system on the device's display, navigate to Settings -> Baud Rate and choose the speed that your computer's serial RS232 port will communicate at.
+2. Plug the WiRSa into your computer's serial port. Set your terminal program to the correct speed and connect. If you just hit enter, you should see a menu in terminal. Go to "MODEM Mode".
+3. Now you will be expected to type in some special "AT" commands. Type AT? for a list of commands.
+4. Let's get connected to your Wifi. Keep in mind the WiRSa can only connect to 2.4 GHz connections, 5.8 GHz aren't supported. Use the following commands:
+     - Enter your router's SSID name.  Type AT$SSID=ssid_name <ENTER>
+     - Now enter your wifi password with AT$PASS=password <ENTER>
+     - Type ATC1 <ENTER> to connect. If your username/password are correct, you should see a connection message and your device's IP address.
+4. You probably don't want to type all that in every time you power up your WiRSa, save all of your settings by typing AT&W <ENTER>. Now the next time you go into MODEM mode, you will automatically be connected to your router.
+5. Now try connecting to one of the speed dial connections. Type AT&V <ENTER> to display your current settings including the speed dial list. To connect, use ATDSN where N is a number 0-9 of the entry. To connect to the first entry, type ATDS0 <ENTER>. To connect to any other telnet system directly, type ATDTbbs.somewhere.com:23 <ENTER>.
+
 ## History
 This began as a device I built for the filming of Apple TV's "The Shining Girls". There were a number of scenes involving computer terminals. They had the terminals but no idea how to display anything on them. I came up with this device as a means to display a static block of text at the terminal or "playback" a text file - ie: when the actor hits a key on the keyboard, regardless of what key is pressed - the next character from the text file gets printed. This creates the illusion that the actor is actually typing the document in real-time but they're really just mashing keys. I've included this text playback feature in the firmware. The text file is read directly from the SD card. I had previously used a Wemos to build a Wifi modem for my Commodore 64 user port. This device is basically the combination of those 2 projects.
 
