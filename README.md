@@ -38,7 +38,7 @@ Because this is similar to the Paul Rickards WiFi232 device, you can refer to [t
 ## Flashing the Firmware
 If you have a WiRSa and want to upgrade the firware to the latest version found here, you have 2 options... 
 1. Install the Arduino software and download the [/Firmware/WiRSa/WiRSa.ino](/Firmware/WiRSa/WiRSa.ino) file. Load the .ino file and compile/upload to the device. You may need to resolve some library dependencies.
-2. Much simpler way is to download the precompiled binary at [/Firmware/WiRSa/WiRSa.ino.d1_mini.bin](/Firmware/WiRSa/WiRSa.ino.d1_mini.bin). Download [NodeMCU-PyFlasher](https://github.com/marcelstoer/nodemcu-pyflasher/releases) and use it to upload the new version.
+2. Much simpler way is to download the precompiled binary at [/Firmware/WiRSa/WiRSa.ino.d1_mini.bin](/Firmware/WiRSa/WiRSa.ino.d1_mini.bin). Download [NodeMCU-PyFlasher](https://github.com/marcelstoer/nodemcu-pyflasher/releases) and use it to upload the new version. In the NodeMCU-PyFlasher software, simply choose the COM port, select the .bin file, and change the Baud rate to 921600. The other options can remain default, click Flash NodeMCU.
 
 For programming, remove the 2 white jumpers. This disables the RS232-TTL converter which sometimes causes interference when programming. After programming, replace jumpers for normal use.
 
