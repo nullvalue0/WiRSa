@@ -1,39 +1,44 @@
 /* [Hidden] */
-point = 0.4;
-wall = 4 * point;
+//wall = 1.6;
+wall = 2.0;
 
-width = 32;
-height = 16.5;
-length = 65.1;
+/*width = 31.8;
+height = 16.1;
+length = 65.3;*/
+
+width = 32.8;
+height = 16.4;
+length = 66.3;
+
 
 deviation = 0.5;
+cover_shrinkage = 0.2;
 $fn=20;
 
 module cover(width, length, wall, deviation) {
     difference() {
         union() {
             translate([-(wall - deviation) / 2, 0, wall - deviation]) {
-                cube([width + wall - deviation, length + wall + ((wall - deviation) / 2),  wall - deviation]);
+                cube([width + wall - deviation-cover_shrinkage, length + wall + ((wall - deviation) / 2),  wall - deviation]);
             }
-            cube([width, length + wall,  wall - deviation]);
+            cube([width-cover_shrinkage, length + wall,  wall - deviation]);
         }
         
         //display opening
-        //translate([4, 15, 0]) {
-        translate([4, 14, 0]) {
+        translate([4, 14.5, 0]) {
             cube([24,14,4]);
         }
 
         linear_extrude(.5) {
-            translate([30,60,8]) //Retro
+            translate([29.5,60,8]) //Retro
                 rotate([0,0,0])
                     mirror([-1,0,0])
                         text("Retro", size=6.5, font="Retronoid:style=Italic");
-            translate([30,53,8]) //Disks
+            translate([29.5,53,8]) //Disks
                 rotate([0,0,0])
                     mirror([-1,0,0])
                         text("D", size=6.5, font="Retronoid:style=Italic");
-            translate([24,53,8]) //Disks
+            translate([23.5,53,8]) //Disks
                 rotate([0,0,0])
                     mirror([-1,0,0])
                         text("isks", size=6.5, font="Retronoid:style=Italic");
@@ -126,7 +131,7 @@ module enclosure(width, length, height, wall, deviation) {
         translate([wall, length, 7.5]) {
             cube(size=[2, 5, height-11]);
         }        
-        translate([width-wall, length, 7.5]) {
+        translate([width-wall+1, length, 7.5]) {
             cube(size=[3, 5, height-11]);
         }        
         
