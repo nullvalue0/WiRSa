@@ -133,7 +133,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 
 // Global variables
-String build = "v2.08";
+String build = "v2.09b";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -232,7 +232,7 @@ bool SW4=false;
 #define DONT 0xfe
 
 WiFiClient tcpClient;
-WiFiServer tcpServer(tcpServerPort);
+WiFiServer tcpServer(0);        // port will be set via .begin(port)
 ESP8266WebServer webServer(80);
 MDNSResponder mdns;
 
@@ -435,14 +435,14 @@ void connectWiFi() {
   }
   Serial.println();
   if (i == 21) {
-    Serial.print("COULD NOT CONNET TO "); Serial.println(ssid);
+    Serial.print("COULD NOT CONNECT TO "); Serial.println(ssid);
     WiFi.disconnect();
     updateLed();
   } else {
     Serial.print("CONNECTED TO "); Serial.println(WiFi.SSID());
     Serial.print("IP ADDRESS: "); Serial.println(WiFi.localIP());
     updateLed();
-    modemMenu();
+    modemMenuMsg();
     firmwareCheck();
   }
 }
@@ -659,6 +659,7 @@ void displayHelp() {
   
   Serial.println("AT COMMAND SUMMARY:"); yield();
   Serial.println("DIAL HOST......: ATDTHOST:PORT"); yield();
+  Serial.println("                 ATDTNNNNNNN (N=0-9)"); yield();
   Serial.println("SPEED DIAL.....: ATDSN (N=0-9)"); yield();
   Serial.println("SET SPEED DIAL.: AT&ZN=HOST:PORT (N=0-9)"); yield();
   Serial.println("HANDLE TELNET..: ATNETN (N=0,1)"); yield();
@@ -677,9 +678,10 @@ void displayHelp() {
   Serial.println("VERBOSE OFF/ON.: ATV0 / ATV1"); yield();
   Serial.println("SET SSID.......: AT$SSID=WIFISSID"); yield();
   Serial.println("SET PASSWORD...: AT$PASS=WIFIPASSWORD"); yield();
+  waitForSpace();
   Serial.println("SET BAUD RATE..: AT$SB=N (3,12,24,48,96"); yield();
   Serial.println("                 192,384,576,1152)*100"); yield();
-  waitForSpace();
+  Serial.println("SET PORT.......: AT$SP=PORT"); yield();
   Serial.println("FLOW CONTROL...: AT&KN (N=0/N,1/HW,2/SW)"); yield();
   Serial.println("WIFI OFF/ON....: ATC0 / ATC1"); yield();
   Serial.println("HANGUP.........: ATH"); yield();
@@ -1013,9 +1015,11 @@ void readSwitches()
 { //these digital pins are pulled HIGH, pushed=LOW
   if (dispOrientation==D_NORMAL) {
     SW1 = (analogRead(A0) < 100); //must read a0 as an analog, < 100 = pushed
+    delay(3);   // required after analogRead to avoid WiFi disconnects (known ESP8266 issue)
     SW2 = !digitalRead(D0); 
   } else {
     SW2 = (analogRead(A0) < 100); //must read a0 as an analog, < 100 = pushed
+    delay(3);   // required after analogRead to avoid WiFi disconnects (known ESP8266 issue)
     SW1 = !digitalRead(D0);     
   }
   SW3 = !digitalRead(D3);
@@ -1023,7 +1027,7 @@ void readSwitches()
 }
 
 void readBackSwitch()
-{ //not sure why but when in a call, SW1 analog read hangs the connection
+{ //not sure why but when in a call, SW1 analog read hangs the connection [obsolete: delay(3) workaround resolves]
   //only concerned about 'back' button push anyways, hence this function
   SW1 = LOW; //must read a0 as an analog, < 100 = pushed
   SW2 = LOW; 
@@ -1091,9 +1095,7 @@ void handleIncomingConnection() {
   }
 
   if (autoAnswer == true) {
-    WiFiClient tempClient = tcpServer.available(); // this is the key to keeping the connection open
-    tcpClient = tempClient; // hand over the new connection to the global client
-    tempClient.stop();   // stop the temporary one
+    tcpClient = tcpServer.available();
     sendString(String("RING ") + ipToString(tcpClient.remoteIP()));
     delay(1000);
     sendResult(R_CONNECT);
@@ -1121,6 +1123,7 @@ void dialOut(String upCmd) {
       host = speedDials[speedNum].substring(0, portIndex);
       port = speedDials[speedNum].substring(portIndex + 1);
     } else {
+      host = speedDials[speedNum];
       port = "23";
     }
   } else {
@@ -1135,6 +1138,26 @@ void dialOut(String upCmd) {
     {
       host = cmd.substring(4, cmd.length());
       port = "23"; // Telnet default
+      if ((host == "0000000") ||
+          (host == "1111111") ||
+          (host == "2222222") ||
+          (host == "3333333") ||
+          (host == "4444444") ||
+          (host == "5555555") ||
+          (host == "6666666") ||
+          (host == "7777777") ||
+          (host == "8888888") ||
+          (host == "9999999")) {
+        byte speedNum = host.substring(0, 1).toInt();
+        portIndex = speedDials[speedNum].indexOf(':');
+        if (portIndex != -1) {
+          host = speedDials[speedNum].substring(0, portIndex);
+          port = speedDials[speedNum].substring(portIndex + 1);
+        } else {
+          host = speedDials[speedNum];
+          port = "23";
+        }
+      }
     }
   }
   host.trim(); // remove leading or trailing spaces
@@ -1617,8 +1640,8 @@ void loop()
 void enterModemMode()
 {
     Serial.println("\r\nEntering MODEM Mode...");
-    modemMenu();
-    if (tcpServerPort > 0) tcpServer.begin();
+    modemMenuMsg();
+    if (tcpServerPort > 0) tcpServer.begin(tcpServerPort);
   
     WiFi.mode(WIFI_STA);
     connectWiFi();
@@ -1922,7 +1945,7 @@ void settingsLoop()
     }    
     else if (chr=='A'||chr=='a'||menuSel==6)
     {
-      Serial.println("** WiRSa BUILD: " + build + " **");
+      Serial.println("** WiRSa BUILD:   " + build + " **");
       showMessage("***************\n* WiRSa BUILD *\n*    " + build + "    *\n***************");
     }
     else if (serAvl>0)
@@ -3147,6 +3170,17 @@ void modemMenu() {
   showMenu("DIAL LIST", speedDials, 10, MENU_DISP, 0);
 }
 
+void modemMenuMsg() {
+  menuMode = MODE_MODEM;
+  display.clearDisplay();
+  display.setCursor(1, 1); 
+  display.setTextColor(SSD1306_WHITE);
+  display.println("Modem mode\nUp/Down show menu");
+  display.display();
+  dispCharCnt=21*2;
+  dispLineCnt=0;
+}
+
 void firmwareCheck() {
   //http://update.retrodisks.com/wirsa-v2.php
   //This works by checking the latest release tag on the hosted github page
@@ -3262,7 +3296,7 @@ void modemLoop()
       hangUp();
       cmdMode = true;  
       msgFlag=true; //force full menu redraw
-      modemMenu();
+      modemMenuMsg();
     }
   }
   if (cmdMode == true)
@@ -3288,6 +3322,8 @@ void modemLoop()
       // Return, enter, new line, carriage return.. anything goes to end the command
       if ((chr == '\n') || (chr == '\r'))
       {
+        displayChar('\n');
+        display.display();
         command();
       }
       // Backspace or delete deletes previous character
@@ -3296,7 +3332,7 @@ void modemLoop()
         cmd.remove(cmd.length() - 1);
         if (echo == true) {
           Serial.write(chr);
-          display.write(chr);
+          displayChar(chr);
           display.display();
         }
       }
@@ -3332,8 +3368,9 @@ void modemLoop()
       // Read from serial, the amount available up to
       // maximum size of the buffer
       size_t len = std::min(Serial.available(), max_buf_size);
-      Serial.readBytes(&txBuf[0], len);
+      len = Serial.readBytes(&txBuf[0], len);
 
+      if (len > 0) displayChar('[');
       // Enter command mode with "+++" sequence
       for (int i = 0; i < (int)len; i++)
       {
@@ -3346,6 +3383,12 @@ void modemLoop()
         {
           plusCount = 0;
         }
+        displayChar(txBuf[i]);
+      }
+      if (len > 0)
+      {
+        displayChar(']');
+        display.display();
       }
 
       // Double (escape) every 0xff for telnet, shifting the following bytes
@@ -3456,7 +3499,7 @@ void modemLoop()
     setCarrier(callConnected);
     
     msgFlag=true; //force full menu redraw
-    modemMenu();
+    modemMenuMsg();
     //if (tcpServerPort > 0) tcpServer.begin();
   }
 
@@ -3611,7 +3654,7 @@ char getKey()
   }
 }
 
-char waitKey(int key1, int key2)
+void waitKey(int key1, int key2)
 {
   while (true)
   {
