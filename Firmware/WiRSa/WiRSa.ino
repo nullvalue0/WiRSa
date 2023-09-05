@@ -232,7 +232,7 @@ bool SW4=false;
 #define DONT 0xfe
 
 WiFiClient tcpClient;
-WiFiServer tcpServer(tcpServerPort);
+WiFiServer tcpServer(0);        // port will be set via .begin(port)
 ESP8266WebServer webServer(80);
 MDNSResponder mdns;
 
@@ -1015,11 +1015,11 @@ void readSwitches()
 { //these digital pins are pulled HIGH, pushed=LOW
   if (dispOrientation==D_NORMAL) {
     SW1 = (analogRead(A0) < 100); //must read a0 as an analog, < 100 = pushed
-    delay(3);
+    delay(3);   // required after analogRead to avoid WiFi disconnects (known ESP8266 issue)
     SW2 = !digitalRead(D0); 
   } else {
     SW2 = (analogRead(A0) < 100); //must read a0 as an analog, < 100 = pushed
-    delay(3);
+    delay(3);   // required after analogRead to avoid WiFi disconnects (known ESP8266 issue)
     SW1 = !digitalRead(D0);     
   }
   SW3 = !digitalRead(D3);
@@ -1027,7 +1027,7 @@ void readSwitches()
 }
 
 void readBackSwitch()
-{ //not sure why but when in a call, SW1 analog read hangs the connection
+{ //not sure why but when in a call, SW1 analog read hangs the connection [obsolete: delay(3) workaround resolves]
   //only concerned about 'back' button push anyways, hence this function
   SW1 = LOW; //must read a0 as an analog, < 100 = pushed
   SW2 = LOW; 
@@ -1095,10 +1095,6 @@ void handleIncomingConnection() {
   }
 
   if (autoAnswer == true) {
-// old workaround no longer works:
-//    WiFiClient tempClient = tcpServer.available(); // this is the key to keeping the connection open
-//    tcpClient = tempClient; // hand over the new connection to the global client
-//    tempClient.stop();   // stop the temporary one
     tcpClient = tcpServer.available();
     sendString(String("RING ") + ipToString(tcpClient.remoteIP()));
     delay(1000);
@@ -1645,7 +1641,7 @@ void enterModemMode()
 {
     Serial.println("\r\nEntering MODEM Mode...");
     modemMenuMsg();
-    if (tcpServerPort > 0) tcpServer.begin();
+    if (tcpServerPort > 0) tcpServer.begin(tcpServerPort);
   
     WiFi.mode(WIFI_STA);
     connectWiFi();
