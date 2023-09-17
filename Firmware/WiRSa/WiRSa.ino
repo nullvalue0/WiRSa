@@ -131,9 +131,8 @@
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-
 // Global variables
-String build = "v2.09b";
+String build = "v2.10";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -141,7 +140,7 @@ bool telnet = false;          // Is telnet control code handling enabled
 bool verboseResults = false;
 //#define DEBUG 1             // Print additional debug information to serial channel
 #undef DEBUG
-#define LISTEN_PORT 6400      // Listen to this if not connected. Set to zero to disable.
+#define LISTEN_PORT 23        // Listen to this if not connected. Set to zero to disable.
 int tcpServerPort = LISTEN_PORT;
 #define RING_INTERVAL 3000    // How often to print RING when having a new incoming connection (ms)
 unsigned long lastRingMs = 0; // Time of last "RING" message (millis())
@@ -198,6 +197,11 @@ int dispAnsiCnt = 0;
 unsigned long xferBytes = 0;
 unsigned int xferBlock = 0;
 String xferMsg = "";
+unsigned long bytesSent = 0;
+unsigned long bytesRecv = 0;
+bool sentChanged = false;
+bool recvChanged = false;
+bool speedDialShown = false;
 
 //file transfer related variables
 const int chipSelect = D8;
@@ -215,6 +219,7 @@ File xferFile;
 bool EscapeTelnet = false;
 CRC16 crc;
 auto timer = timer_create_default();
+auto modem_timer = timer_create_default();
 String terminalMode = "VT100";
 String fileName = "";
 String files[100];
@@ -224,6 +229,27 @@ bool SW1=false;
 bool SW2=false;
 bool SW3=false;
 bool SW4=false;
+
+const uint8_t PROGMEM wifi_symbol[] = {
+  0b00111100,
+  0b01000010,
+  0b10011001,
+  0b00100100,
+  0b01000010,
+  0b00011000,
+  0b00100100
+};
+
+const uint8_t PROGMEM phon_symbol[] = {
+  0b00111100,
+  0b11000011,
+  0b11011011,
+  0b00111100,
+  0b01111110,
+  0b01111110,
+  0b01111110,
+  0b01111110
+};
 
 // Telnet codes
 #define DO 0xfd
@@ -436,28 +462,39 @@ void connectWiFi() {
   Serial.println();
   if (i == 21) {
     Serial.print("COULD NOT CONNECT TO "); Serial.println(ssid);
+    modemMenuMsg();
+    display.println("COULD NOT CONNECT\nTO WIFI.\n");
+    display.display();
+
     WiFi.disconnect();
-    updateLed();
+    showWifiIcon();
   } else {
     Serial.print("CONNECTED TO "); Serial.println(WiFi.SSID());
     Serial.print("IP ADDRESS: "); Serial.println(WiFi.localIP());
-    updateLed();
-    modemMenuMsg();
+    if (tcpServerPort > 0) {
+      Serial.print("LISTENING ON PORT "); Serial.println(tcpServerPort);
+    }
+    modemConnected();
+    showWifiIcon();
     firmwareCheck();
   }
 }
 
-void updateLed() {
+void showWifiIcon() {
   if (WiFi.status() == WL_CONNECTED) {
     digitalWrite(LED_PIN, LOW);  // on
+    display.drawBitmap(72, 1, wifi_symbol, 8, 7, SSD1306_BLACK);
   } else {
     digitalWrite(LED_PIN, HIGH); //off
+    display.fillRect(72, 1, 8, 7, SSD1306_WHITE);
   }
+  display.display();
 }
 
 void disconnectWiFi() {
   WiFi.disconnect();
-  updateLed();
+  delay(200);
+  showWifiIcon();
 }
 
 void setBaudRate(int inSpeed) {
@@ -496,6 +533,15 @@ void setBaudRate(int inSpeed) {
 void setCarrier(byte carrier) {
   if (pinPolarity == P_NORMAL) carrier = !carrier;
   digitalWrite(DCD_PIN, carrier);
+  showCallIcon();
+}
+
+void showCallIcon() {
+  if (callConnected)
+    display.drawBitmap(85, 1, phon_symbol, 8, 7, SSD1306_BLACK);
+  else
+    display.fillRect(85, 1, 8, 7, SSD1306_WHITE);
+  display.display();
 }
 
 void displayNetworkStatus() {
@@ -708,6 +754,14 @@ String padLeft(String s, int len) {
   return s;
 }
 
+String padRight(String s, int len) {
+  while (s.length()<len)
+  {
+    s = s + " ";
+  }
+  return s;
+}
+
 void mainMenu(bool arrow) {
   menuMode=MODE_MAIN;
   showMenu("MAIN", mainMenuDisp, 4, (arrow?MENU_DISP:MENU_BOTH), 0);
@@ -755,9 +809,9 @@ bool showHeader(String menu, int dispMode) {
 
 void showMessage(String message) {
   display.fillRect(1, 10, 125, 53, SSD1306_BLACK);
-  display.drawRect(16, 12, 97, 40, SSD1306_WHITE);
-  display.fillRect(18, 14, 93, 36, SSD1306_WHITE);
-  int x = 20;
+  display.drawRect(15, 12, 97, 40, SSD1306_WHITE);
+  display.fillRect(17, 14, 93, 36, SSD1306_WHITE);
+  int x = 19;
   int y = 16;
   int c= 0;
   display.setCursor(x,y);
@@ -765,10 +819,10 @@ void showMessage(String message) {
   
   for (int i = 0; i < message.length(); i++) {
     if (message[i] == '\n') {
-      x = 20; y += 8; c = 0;
+      x = 19; y += 8; c = 0;
       display.setCursor(x, y);
     } else if (c == 15) {
-      x = 20; y += 8; c = 0;
+      x = 19; y += 8; c = 0;
       display.setCursor(x, y);
       display.write(message[i]);
     } else {
@@ -803,7 +857,7 @@ void showMenu(String menuName, String options[], int sz, int dispMode, int defau
     menuEnd=menuCnt;
   else {
     //clear out menu area
-    display.fillRect(2, 9, 123, 54, SSD1306_BLACK);
+    display.fillRect(1, 9, 126, 54, SSD1306_BLACK);
     
     menuStart=menuIdx;
     if (menuIdx<6)
@@ -913,6 +967,8 @@ void setup() {
   pinMode(SW4_PIN, INPUT);
   Serial.println("");
   Serial.println("-= RetroDisks  WiRSa =-");
+
+  if (tcpServerPort > 0) tcpServer.begin(tcpServerPort);
 
   if (defaultMode==MODE_MAIN)
     mainMenu(false);
@@ -1176,9 +1232,6 @@ void dialOut(String upCmd) {
     Serial.flush();
     callConnected = true;
     setCarrier(callConnected);
-    display.clearDisplay();
-    display.setCursor(1, 1); 
-    display.display();
     //if (tcpServerPort > 0) tcpServer.stop();
   }
   else
@@ -1517,7 +1570,7 @@ void command()
     sendResult(R_OK);
   }
 
-  /**** Display icoming TCP server port ****/
+  /**** Display incoming TCP server port ****/
   else if (upCmd == "AT$SP?") {
     sendString(String(tcpServerPort));
     sendResult(R_OK);
@@ -1640,8 +1693,16 @@ void loop()
 void enterModemMode()
 {
     Serial.println("\r\nEntering MODEM Mode...");
-    modemMenuMsg();
-    if (tcpServerPort > 0) tcpServer.begin(tcpServerPort);
+    menuMode = MODE_MODEM;
+    ///if (tcpServerPort > 0) tcpServer.begin(tcpServerPort);
+    bytesSent=0;
+    bytesRecv=0;
+    sentChanged=false;
+    recvChanged=false;
+    speedDialShown=false;
+    callConnected=false;
+    
+    modem_timer.every(250, refreshDisplay);
   
     WiFi.mode(WIFI_STA);
     connectWiFi();
@@ -1653,7 +1714,7 @@ void enterModemMode()
     webServer.on("/", handleRoot);
     webServer.on("/ath", handleWebHangUp);
     webServer.begin();
-    mdns.begin("C64WiFi", WiFi.localIP());
+    mdns.begin("WiRSa", WiFi.localIP());
 }
 
 void mainLoop()
@@ -1681,19 +1742,19 @@ void mainLoop()
 
     int serAvl = Serial.available();
     char chr;
-    if (serAvl>0) {
-      chr = Serial.read();
-      Serial.print(chr);
-    }
+    if (serAvl>0)
+      chr = Serial.read();      
 
     if (serAvl>0 || menuSel>-1)
     {
       if (chr=='M'||chr=='m'||menuSel==0) //enter modem mode
       {
+        Serial.print(chr); //echo it back if it was a valid entry
         enterModemMode();
       }
       else if (chr=='F'||chr=='f'||menuSel==1)
       {
+        Serial.print(chr); //echo it back if it was a valid entry
         Serial.println("");
         Serial.println("Initializing SD card...");
         if (!SD.begin(chipSelect)) {
@@ -1706,6 +1767,7 @@ void mainLoop()
       }
       else if (chr=='P'||chr=='p'||menuSel==2)
       {
+        Serial.print(chr); //echo it back if it was a valid entry
         Serial.println("");
         Serial.println("Initializing SD card...");
         if (!SD.begin(chipSelect)) {
@@ -1718,11 +1780,17 @@ void mainLoop()
       }
       else if (chr=='S'||chr=='s'||menuSel==3)
       {
+        Serial.print(chr); //echo it back if it was a valid entry
         settingsMenu(false);
+      }
+      else if (chr=='\r'||chr=='\n'||chr=='?')
+      {
+        Serial.print(chr); //echo it back if it was a valid entry
+        mainMenu(false);
       }
       else if (serAvl>0)
       { //redisplay the menu 
-        mainMenu(false);
+        //mainMenu(false);
       }
     }
 }
@@ -3166,7 +3234,9 @@ void listFilesMenu(bool arrow) {
 }
 
 void modemMenu() {
+  modem_timer.cancel();
   menuMode = MODE_MODEM;
+  speedDialShown=true;
   showMenu("DIAL LIST", speedDials, 10, MENU_DISP, 0);
 }
 
@@ -3179,6 +3249,43 @@ void modemMenuMsg() {
   display.display();
   dispCharCnt=21*2;
   dispLineCnt=0;
+}
+
+void modemConnected() {  
+  showMenu("MODEM", {}, 0, MENU_DISP, 0);
+  showWifiIcon();
+  showCallIcon();
+  display.setTextWrap(false);
+
+  display.setCursor(3, 11);
+  display.print("WIFI: "); 
+  display.print(WiFi.SSID());
+
+  display.setCursor(3, 21);     // Start at top-left corner
+  display.print("ADDR: ");
+  display.print(WiFi.localIP());
+
+  if (tcpServerPort > 0) {
+    display.setCursor(3, 31);
+    display.print("PORT: ");
+    display.print(tcpServerPort);
+    display.print(" (TELNET)");
+  }
+
+  display.drawLine(0,40,127,40,SSD1306_WHITE);
+   
+  display.setCursor(3, 43);
+  display.print("SENT: ");
+  display.print(String(bytesSent));
+  display.print(" B");
+
+  display.setCursor(3, 53);
+  display.print("RECV: ");
+  display.print(String(bytesRecv));
+  display.print(" B");
+
+  display.display();
+  display.setTextWrap(true);
 }
 
 void firmwareCheck() {
@@ -3255,9 +3362,14 @@ void firmwareUpdateError(int err) {
   Serial.printf("HTTP update fatal error code %\r\n", err);
 }
 
+bool function_to_call(void *argument /* optional argument given to in/at/every */) {
+    return true; // to repeat the action - false to stop
+}
 
 void modemLoop()
-{  
+{
+  modem_timer.tick();
+
   // Check flow control
   handleFlowControl();
     
@@ -3288,6 +3400,7 @@ void modemLoop()
     modemMenu();
   } else if (SW3) { //ENTER
     dialOut("ATDS" + String(menuIdx));
+    modem_timer.every(250, refreshDisplay);
   } else if (SW4) { //BACK
     //if in a call, first back push ends call, 2nd exits modem mode
     if (cmdMode==true)
@@ -3296,7 +3409,7 @@ void modemLoop()
       hangUp();
       cmdMode = true;  
       msgFlag=true; //force full menu redraw
-      modemMenuMsg();
+      modem_timer.every(250, refreshDisplay);
     }
   }
   if (cmdMode == true)
@@ -3322,7 +3435,7 @@ void modemLoop()
       // Return, enter, new line, carriage return.. anything goes to end the command
       if ((chr == '\n') || (chr == '\r'))
       {
-        displayChar('\n');
+        displayChar('\n', XFER_RECV);
         display.display();
         command();
       }
@@ -3332,7 +3445,7 @@ void modemLoop()
         cmd.remove(cmd.length() - 1);
         if (echo == true) {
           Serial.write(chr);
-          displayChar(chr);
+          displayChar(chr, XFER_RECV);
           display.display();
         }
       }
@@ -3341,7 +3454,7 @@ void modemLoop()
         if (cmd.length() < MAX_CMD_LENGTH) cmd.concat(chr);
         if (echo == true) {
           Serial.write(chr);
-          displayChar(chr);
+          displayChar(chr, XFER_RECV);
         }
         if (bHex) {
           Serial.print(chr, HEX);
@@ -3370,7 +3483,7 @@ void modemLoop()
       size_t len = std::min(Serial.available(), max_buf_size);
       len = Serial.readBytes(&txBuf[0], len);
 
-      if (len > 0) displayChar('[');
+      //if (len > 0) displayChar('[');
       // Enter command mode with "+++" sequence
       for (int i = 0; i < (int)len; i++)
       {
@@ -3383,11 +3496,11 @@ void modemLoop()
         {
           plusCount = 0;
         }
-        displayChar(txBuf[i]);
+        displayChar(txBuf[i], XFER_SEND);
       }
       if (len > 0)
       {
-        displayChar(']');
+        //displayChar(']');
         display.display();
       }
 
@@ -3469,7 +3582,7 @@ void modemLoop()
       {
         // Non-control codes pass through freely
         Serial.write(rxByte); 
-        displayChar(rxByte);
+        displayChar(rxByte, XFER_RECV);
         Serial.flush(); yield();
        }
       handleFlowControl();
@@ -3499,7 +3612,7 @@ void modemLoop()
     setCarrier(callConnected);
     
     msgFlag=true; //force full menu redraw
-    modemMenuMsg();
+    modemConnected();
     //if (tcpServerPort > 0) tcpServer.begin();
   }
 
@@ -3507,6 +3620,54 @@ void modemLoop()
   if (millis() - ledTime > LED_TIME) digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // toggle LED state
 }
 
+bool refreshDisplay(void *)
+{
+  if (speedDialShown) {
+    display.clearDisplay();
+    modemConnected();  //refresh the whole modem screen
+    display.drawLine(0,0,0,63,SSD1306_WHITE);  //redraw the border
+    display.drawLine(127,0,127,63,SSD1306_WHITE);
+    display.drawLine(0,63,127,63,SSD1306_WHITE);
+    speedDialShown=false;
+  }
+
+  if (sentChanged) {
+    display.fillRect(39, 43, 88, 8, SSD1306_BLACK);
+    display.setCursor(39, 43);
+    display.print(String(bytesSent));
+    display.print(" B");
+  }
+  if (recvChanged) {
+    display.fillRect(39, 53, 88, 8, SSD1306_BLACK);
+    display.setCursor(39, 53);
+    display.print(String(bytesRecv));
+    display.print(" B");
+  }
+  
+  if (sentChanged||recvChanged) {
+    sentChanged=false;
+    recvChanged=false;
+    display.display();
+  }
+  
+  return true;
+}
+
+
+void displayChar(char chr, int dir) {
+  if (WiFi.status() == WL_CONNECTED && callConnected==true) {
+    if (dir==XFER_SEND) {
+      bytesSent++;
+      sentChanged=true;
+    }
+    if (dir==XFER_RECV) {
+      bytesRecv++;
+      recvChanged=true;
+    }
+  }
+}
+
+/*
 void displayChar(char chr) {
   if (dispCharCnt>=168) {
     //only refresh the display for each new full screen of characters
@@ -3534,7 +3695,7 @@ void displayChar(char chr) {
     dispLineCnt++;
   }
   display.write(chr);
-}
+}*/
 
 void changeTerminalMode()
 {
