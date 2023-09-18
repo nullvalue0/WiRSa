@@ -94,6 +94,7 @@
 #define BUSY_MSG_LEN    80
 #define ORIENTATION_ADDRESS 780
 #define DEFAULTMODE_ADDRESS 790
+#define SERIALCONFIG_ADDRESS 791
 #define LAST_ADDRESS    800
 
 #define SWITCH_PIN 0       // GPIO0 (programmind mode pin)
@@ -117,6 +118,7 @@
 #define MODE_ORIENTATION 7
 #define MODE_DEFAULTMODE 8
 #define MODE_PROTOCOL 9
+#define MODE_SERIALCONFIG 10
 
 #define MENU_BOTH 0 //show menu on both serial port & display using first letter as selector
 #define MENU_NUM  1 //show menu on both serial port & display but serial uses a numeric selector - has a limit of 10 items because the input currently returns after 1 character entry
@@ -132,7 +134,7 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Global variables
-String build = "v2.10";
+String build = "v2.11";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -156,17 +158,23 @@ unsigned long ledTime = 0;
 uint8_t txBuf[TX_BUF_SIZE];
 const int speedDialAddresses[] = { DIAL0_ADDRESS, DIAL1_ADDRESS, DIAL2_ADDRESS, DIAL3_ADDRESS, DIAL4_ADDRESS, DIAL5_ADDRESS, DIAL6_ADDRESS, DIAL7_ADDRESS, DIAL8_ADDRESS, DIAL9_ADDRESS };
 String speedDials[10];
+
+byte serialConfig;
+const int bits[] = { SERIAL_5N1, SERIAL_6N1, SERIAL_7N1, SERIAL_8N1, SERIAL_5N2, SERIAL_6N2, SERIAL_7N2, SERIAL_8N2, SERIAL_5E1, SERIAL_6E1, SERIAL_7E1, SERIAL_8E1, SERIAL_5E2, SERIAL_6E2, SERIAL_7E2, SERIAL_8E2, SERIAL_5O1, SERIAL_6O1, SERIAL_7O1, SERIAL_8O1, SERIAL_5O2, SERIAL_6O2, SERIAL_7O2, SERIAL_8O2 };
+String bitsDisp[] = { "5-N-1", "6-N-1", "7-N-1", "8-N-1 (default)", "5-N-2", "6-N-2", "7-N-2", "8-N-2", "5-E-1", "6-E-1", "7-E-1", "8-E-1", "5-E-2", "6-E-2", "7-E-2", "8-E-2", "5-O-1", "6-O-1", "7-O-1", "8-O-1", "5-O-2", "6-O-2", "7-O-2", "8-O-2" };
+
 const int bauds[] = { 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 };
 String baudDisp[] = { "300", "1200", "2400", "4800", "9600", "19.2k", "38.4k", "57.6k", "115k" };
+byte serialSpeed;
+
 String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Playback Text", "Settings" };
-String settingsMenuDisp[] = { "MAIN", "Baud Rate", "Screen", "Default Menu", "Factory Reset", "Reboot", "About" };
+String settingsMenuDisp[] = { "MAIN", "Baud Rate", "Serial Config", "OLED Display", "Default Menu", "Factory Reset", "Reboot", "About" };
 String orientationMenuDisp[] = { "Normal", "Flipped" };
 String playbackMenuDisp[] = { "MAIN", "List Files", "Display File", "Playback File", "Evaluate Key", "Terminal Mode" };
 String fileMenuDisp[] = { "MAIN", "List Files on SD", "Send (from SD)", "Recieve (to SD)" };
 String protocolMenuDisp[] = { "BACK", "Raw", "XModem", "YModem", "ZModem", "Kermit" };
 String defaultModeDisp[] = { "Main Menu", "MODEM Mode" };
-                          
-byte serialspeed;
+
 bool echo = true;
 bool autoAnswer = false;
 String ssid, password, busyMsg;
@@ -183,7 +191,7 @@ enum pinPolarity_t { P_INVERTED, P_NORMAL }; // Is LOW (0) or HIGH (1) active?
 byte pinPolarity = P_INVERTED;
 enum dispOrientation_t { D_NORMAL, D_FLIPPED }; // Normal or Flipped
 byte dispOrientation = D_NORMAL;
-enum defaultMode_t { D_MAINMENU, D_MODEMMENU }; // Normal or Flipped
+enum defaultMode_t { D_MAINMENU, D_MODEMMENU }; // Main or Modem
 byte defaultMode = D_MAINMENU;
 
 int menuMode = MODE_MAIN;
@@ -286,7 +294,7 @@ void writeSettings() {
   setEEPROM(password, PASS_ADDRESS, PASS_LEN);
   setEEPROM(busyMsg, BUSY_MSG_ADDRESS, BUSY_MSG_LEN);
 
-  EEPROM.write(BAUD_ADDRESS, serialspeed);
+  EEPROM.write(BAUD_ADDRESS, serialSpeed);
   EEPROM.write(ECHO_ADDRESS, byte(echo));
   EEPROM.write(AUTO_ANSWER_ADDRESS, byte(autoAnswer));
   EEPROM.write(SERVER_PORT_ADDRESS, highByte(tcpServerPort));
@@ -298,7 +306,8 @@ void writeSettings() {
   EEPROM.write(PIN_POLARITY_ADDRESS, byte(pinPolarity));
   EEPROM.write(ORIENTATION_ADDRESS, byte(dispOrientation));
   EEPROM.write(DEFAULTMODE_ADDRESS, byte(defaultMode));
-  
+  EEPROM.write(SERIALCONFIG_ADDRESS, serialConfig);
+    
   for (int i = 0; i < 10; i++) {
     setEEPROM(speedDials[i], speedDialAddresses[i], 50);
   }
@@ -308,7 +317,7 @@ void writeSettings() {
 void readSettings() {
   echo = EEPROM.read(ECHO_ADDRESS);
   autoAnswer = EEPROM.read(AUTO_ANSWER_ADDRESS);
-  // serialspeed = EEPROM.read(BAUD_ADDRESS);
+  serialSpeed = EEPROM.read(BAUD_ADDRESS);
 
   ssid = getEEPROM(SSID_ADDRESS, SSID_LEN);
   password = getEEPROM(PASS_ADDRESS, PASS_LEN);
@@ -321,6 +330,7 @@ void readSettings() {
   pinPolarity = EEPROM.read(PIN_POLARITY_ADDRESS);
   dispOrientation = EEPROM.read(ORIENTATION_ADDRESS);
   defaultMode = EEPROM.read(DEFAULTMODE_ADDRESS);
+  serialConfig = EEPROM.read(SERIALCONFIG_ADDRESS);
 
   for (int i = 0; i < 10; i++) {
     speedDials[i] = getEEPROM(speedDialAddresses[i], 50);
@@ -345,6 +355,7 @@ void defaultEEPROM() {
   EEPROM.write(PET_TRANSLATE_ADDRESS, 0x00);
   EEPROM.write(FLOW_CONTROL_ADDRESS, 0x00);
   EEPROM.write(PIN_POLARITY_ADDRESS, 0x01);
+  EEPROM.write(SERIALCONFIG_ADDRESS, 0x03); //8-N-1
 
   setEEPROM("bbs.fozztexx.com:23", speedDialAddresses[0], 50);
   setEEPROM("cottonwoodbbs.dyndns.org:6502", speedDialAddresses[1], 50);
@@ -399,7 +410,7 @@ void sendResult(int resultCode) {
     return;
   }
   if (resultCode == R_CONNECT) {
-    Serial.print(String(resultCodes[R_CONNECT]) + " " + String(bauds[serialspeed]));
+    Serial.print(String(resultCodes[R_CONNECT]) + " " + String(bauds[serialSpeed]));
   } else if (resultCode == R_NOCARRIER) {
     Serial.print(String(resultCodes[R_NOCARRIER]) + " (" + connectTimeString() + ")");
   } else {
@@ -427,9 +438,9 @@ int checkButton() {
   if (millis() - time > 5000) {
     Serial.flush();
     Serial.end();
-    serialspeed = 0;
+    serialSpeed = 0;
     delay(100);
-    Serial.begin(bauds[serialspeed]);
+    Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
     sendResult(R_OK);
     while (digitalRead(SWITCH_PIN) == LOW) {
       delay(50);
@@ -514,7 +525,7 @@ void setBaudRate(int inSpeed) {
     sendResult(R_ERROR);
     return;
   }
-  if (foundBaud == serialspeed) {
+  if (foundBaud == serialSpeed) {
     sendResult(R_OK);
     return;
   }
@@ -524,8 +535,8 @@ void setBaudRate(int inSpeed) {
   delay(5000);
   Serial.end();
   delay(200);
-  Serial.begin(bauds[foundBaud]);
-  serialspeed = foundBaud;
+  Serial.begin(bauds[foundBaud], (SerialConfig)bits[serialConfig]);
+  serialSpeed = foundBaud;
   delay(200);
   sendResult(R_OK);
 }
@@ -624,7 +635,7 @@ void displayNetworkStatus() {
 
 void displayCurrentSettings() {
   Serial.println("ACTIVE PROFILE:"); yield();
-  Serial.print("BAUD: "); Serial.println(bauds[serialspeed]); yield();
+  Serial.print("BAUD: "); Serial.println(bauds[serialSpeed]); yield();
   Serial.print("SSID: "); Serial.println(ssid); yield();
   Serial.print("PASS: "); Serial.println(password); yield();
   //Serial.print("SERVER TCP PORT: "); Serial.println(tcpServerPort); yield();
@@ -798,7 +809,7 @@ bool showHeader(String menu, int dispMode) {
   display.setTextColor(SSD1306_BLACK); // Draw white text
   String line = "WiRSa " + menu;
   display.print(line);  
-  String bps = baudDisp[serialspeed];
+  String bps = baudDisp[serialSpeed];
   display.println(padLeft(bps,21-line.length()));
   display.setTextColor(SSD1306_WHITE); // Draw white text
   display.setCursor(0, 13);     // Start at top-left corner
@@ -875,9 +886,19 @@ void showMenu(String menuName, String options[], int sz, int dispMode, int defau
   }
 
   if (dispMode!=MENU_DISP) {
+    int c = 0;
     for (int i=0;i<menuCnt;i++) {
       if (dispMode==MENU_NUM)
-        Serial.println(" [" + String(i) + "] " + options[i]);
+      {
+        if (c==2) {
+          Serial.println(" [" + String((char)(65+i)) + "] " + options[i]);
+          c=0;
+        }          
+        else {
+          Serial.print(" [" + String((char)(65+i)) + "] " + padRight(options[i], 15));
+          c++;
+        }
+      }
       else //MENU_BOTH
         Serial.println(" [" + options[i].substring(0,1) + "]" + options[i].substring(1));
     }
@@ -947,11 +968,12 @@ void setup() {
   }
 
   readSettings();
-  // Fetch baud rate from EEPROM
-  serialspeed = EEPROM.read(BAUD_ADDRESS);
   // Check if it's out of bounds-- we have to be able to talk
-  if (serialspeed < 0 || serialspeed > sizeof(bauds)) {
-    serialspeed = 0;
+  if (serialSpeed < 0 || serialSpeed > sizeof(bauds)) {
+    serialSpeed = 4; //9600
+  }
+  if (serialConfig < 0 || serialConfig > sizeof(bits)) {
+    serialConfig = 3; //8-N-1
   }
 
   if (dispOrientation==D_NORMAL)
@@ -960,7 +982,7 @@ void setup() {
     display.setRotation(2);
 
   
-  Serial.begin(bauds[serialspeed]);
+  Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
   pinMode(SW1_PIN, INPUT);
   pinMode(SW2_PIN, INPUT);
   pinMode(SW3_PIN, INPUT);
@@ -1398,7 +1420,7 @@ void command()
 
   /**** Display current baud rate ****/
   else if (upCmd.indexOf("AT$SB?") == 0) {
-    sendString(String(bauds[serialspeed]));;
+    sendString(String(bauds[serialSpeed]));;
   }
 
   /**** Set busy message ****/
@@ -1680,6 +1702,8 @@ void loop()
     settingsLoop();
   else if (menuMode==MODE_SETBAUD)
     baudLoop();    
+  else if (menuMode==MODE_SERIALCONFIG)
+    serialLoop();    
   else if (menuMode==MODE_LISTFILE)
     listFilesLoop();
   else if (menuMode==MODE_ORIENTATION)
@@ -1828,23 +1852,82 @@ void baudLoop()
   
   if (menuSel>-1)
   {
-    serialspeed = menuIdx;
+    serialSpeed = menuIdx;
     writeSettings();
     Serial.end();
     delay(200);
-    Serial.begin(bauds[serialspeed]);
+    Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
     settingsMenu(false);
   } else if (serAvl>0) {
-    if (chr>=48 && chr <=57) //between 0-9
+    //between A-I                                or a-i
+    if (chr>=65 && chr <= 65+sizeof(bauds) || chr>=97 && chr <= 97+sizeof(bauds)) 
     {
-      serialspeed = chr-48;
+      if (chr>=97)
+        chr -= 32; //convert to uppercase
+      serialSpeed = chr-65;
       writeSettings();
       Serial.end();
       delay(200);
-      Serial.begin(bauds[serialspeed]);
+      Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
       settingsMenu(false);
     } else
       baudMenu(false);
+  }
+}
+
+void serialLoop()
+{
+  int menuSel=-1;
+  readSwitches();
+  if (SW1) {  //UP
+      menuIdx--;
+      if (menuIdx<0)
+        menuIdx=menuCnt-1;
+      serialMenu(true);
+  }
+  else if (SW2) { //DOWN
+    menuIdx++;
+    if (menuIdx>(menuCnt-1))
+      menuIdx=0;
+    serialMenu(true);
+  }
+  else if (SW3) { //ENTER
+    menuSel = menuIdx;
+  }
+  else if (SW4) { //BACK
+    settingsMenu(false);
+  }
+  waitSwitches();
+
+  int serAvl = Serial.available();
+  char chr;
+  if (serAvl>0) {
+    chr = Serial.read();
+    Serial.print(chr);
+  }
+  
+  if (menuSel>-1)
+  {
+    serialConfig = menuIdx;
+    writeSettings();
+    Serial.end();
+    delay(200);
+    Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
+    settingsMenu(false);
+  } else if (serAvl>0) {
+    //between A-X                                or a-x
+    if (chr>=65 && chr <= 65+sizeof(bits) || chr>=97 && chr <= 97+sizeof(bits)) 
+    {
+      if (chr>=97)
+        chr -= 32; //convert to uppercase
+      serialConfig = chr-65;
+      writeSettings();
+      Serial.end();
+      delay(200);
+      Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
+      settingsMenu(false);
+    } else
+      serialMenu(false);
   }
 }
 
@@ -1936,9 +2019,9 @@ void defaultModeLoop()
 
   if (serAvl>0 || menuSel>-1)
   {
-    if (chr=='0')
+    if (chr=='A'||chr=='a')
       menuSel=0;
-    else if (chr=='1')
+    else if (chr=='B'||chr=='b')
       menuSel=1;
       
     if (menuSel>-1)
@@ -1992,28 +2075,32 @@ void settingsLoop()
     }
     else if (chr=='S'||chr=='s'||menuSel==2)
     {
+      serialMenu(false);
+    }
+    else if (chr=='O'||chr=='o'||menuSel==3)
+    {
       orientationMenu(false);
     }
-    else if (chr=='D'||chr=='d'||menuSel==3)
+    else if (chr=='D'||chr=='d'||menuSel==4)
     {
       defaultModeMenu(false);
     }
-    else if (chr=='F'||chr=='f'||menuSel==4)
+    else if (chr=='F'||chr=='f'||menuSel==5)
     {
        Serial.println("** PLEASE WAIT: FACTORY RESET **");
        showMessage("***************\n* PLEASE WAIT *\n*FACTORY RESET*\n***************");
        defaultEEPROM();
        resetFunc();
     }
-    else if (chr=='R'||chr=='r'||menuSel==5)
+    else if (chr=='R'||chr=='r'||menuSel==6)
     {
       Serial.println("** PLEASE WAIT: REBOOTING **");
       showMessage("***************\n* PLEASE WAIT *\n*  REBOOTING  *\n***************");
       resetFunc();
     }    
-    else if (chr=='A'||chr=='a'||menuSel==6)
+    else if (chr=='A'||chr=='a'||menuSel==7)
     {
-      Serial.println("** WiRSa BUILD:   " + build + " **");
+      Serial.println("\n** WiRSa BUILD:   " + build + " **");
       showMessage("***************\n* WiRSa BUILD *\n*    " + build + "    *\n***************");
     }
     else if (serAvl>0)
@@ -2030,7 +2117,7 @@ void playbackMenu(bool arrow) {
 
 void settingsMenu(bool arrow) {
   menuMode = MODE_SETTINGS;
-  showMenu("SETTINGS", settingsMenuDisp, 7, (arrow?MENU_DISP:MENU_BOTH), 0);
+  showMenu("SETTINGS", settingsMenuDisp, 8, (arrow?MENU_DISP:MENU_BOTH), 0);
 }
 
 void orientationMenu(bool arrow) {
@@ -2050,7 +2137,12 @@ void protocolMenu(bool arrow) {
 
 void baudMenu(bool arrow) {
   menuMode = MODE_SETBAUD;
-  showMenu("SET BAUD", baudDisp, 9, (arrow?MENU_DISP:MENU_NUM), serialspeed);
+  showMenu("SET BAUD", baudDisp, 9, (arrow?MENU_DISP:MENU_NUM), serialSpeed);
+}
+
+void serialMenu(bool arrow) {
+  menuMode = MODE_SERIALCONFIG;
+  showMenu("SERIAL", bitsDisp, 24, (arrow?MENU_DISP:MENU_NUM), serialConfig);
 }
 
 void fileMenu(bool arrow) {
