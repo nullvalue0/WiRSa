@@ -6,8 +6,9 @@ wall = 2.0;
 height = 16.1;
 length = 65.3;*/
 
-width = 32.8;
-height = 16.4;
+width = 32.6;
+//height = 16.4;
+height = 17;
 length = 66.3;
 
 
@@ -25,25 +26,25 @@ module cover(width, length, wall, deviation) {
         }
         
         //display opening
-        translate([4, 14.5, 0]) {
-            cube([24,14,4]);
+        translate([4.5, 14.8, 0]) {
+            cube([25,14,4]);
         }
 
         linear_extrude(.5) {
-            translate([29.5,60,8]) //Retro
+            translate([29.7,60,8]) //Retro
                 rotate([0,0,0])
                     mirror([-1,0,0])
                         text("Retro", size=6.5, font="Retronoid:style=Italic");
-            translate([29.5,53,8]) //Disks
+            translate([29.7,53,8]) //Disks
                 rotate([0,0,0])
                     mirror([-1,0,0])
                         text("D", size=6.5, font="Retronoid:style=Italic");
-            translate([23.5,53,8]) //Disks
+            translate([23.7,53,8]) //Disks
                 rotate([0,0,0])
                     mirror([-1,0,0])
                         text("isks", size=6.5, font="Retronoid:style=Italic");
             
-            translate([30,5,6]) //WiRSa
+            translate([30.2,5,6]) //WiRSa
                 rotate([0,0,0])
                     mirror([-1,0,0])
                         text("WiRSa", size=7, font="Courier New:style=bold");
