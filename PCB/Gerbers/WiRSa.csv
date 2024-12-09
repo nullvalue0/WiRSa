@@ -1,0 +1,12 @@
+Comment,Designator,Footprint,LCSC
+"0.1uF","C1,C2,C3,C4,C5","Capacitor_SMD:C_0603_1608Metric","C14663"
+"MAX3243CDBR","IC1","easyeda2kicad:SSOP-28_L10.2-W5.3-P0.65-LS7.8-BL","C414614"
+"DE9 Female","J1","Connector_Dsub:DSUB-9_Female_Horizontal_P2.77x2.84mm_EdgePinOffset4.94mm_Housed_MountingHolesOffset7.48mm",""
+"spare IO","J2","Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",""
+"Conn_01x02_Socket","J3","Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",""
+"2016WVS-02P","J4","easyeda2kicad:CONN-SMD_P2.00_X2016WVS-02-9TSW","C5448068"
+"10k","R1,R2,R3,R4,R5,R6,R7,R8,R9","Resistor_SMD:R_0603_1608Metric","C25804"
+"SW_Push","SW1,SW2,SW3,SW4","Button_Switch_THT:SW_Tactile_SPST_Angled_PTS645Vx58-2LFS",""
+"SK-3245S-L3-B","SW5","easyeda2kicad:SW-SMD_SK-3245S-L3-B","C405954"
+"TF-123-ARP9H17","U1","easyeda2kicad:TF-SMD_TF-123-ARP9H15","C2982548"
+"ESP32-WROOM-32D DEV BOARD","U2","esp32:ESP32-C3-DevKitC-02",""

@@ -1,6 +1,6 @@
 /**************************************************************************
-   RetroDisks WiRSa v2 - Wifi RS232 Serial Modem Adapter with File Transfer features
-   Copyright (C) 2022 Aron Hoekstra <nullvalue@gmail.com>
+   RetroDisks WiRSa v3 - Wi-Fi RS232 Serial Modem Adapter with File Transfer features
+   Copyright (C) 2024 Aron Hoekstra <nullvalue@gmail.com>
 
    based on:
      Virtual modem for ESP8266
@@ -17,10 +17,10 @@
   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
   copies of the Software, and to permit persons to whom the Software is
   furnished to do so, subject to the following conditions:
-  
+ 
   The above copyright notice and this permission notice shall be included in all
   copies or substantial portions of the Software.
-  
+ 
   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -30,33 +30,34 @@
   SOFTWARE.
  **************************************************************************
  This software uses libraries published by Adafruit for LCD screen control
- Adafruit_SSD1306 & Adafruit_GFX. 
+ Adafruit_SSD1306 & Adafruit_GFX.
  **************************************************************************
  This software uses the LinkedList library by Ivan Seidel
  http://github.com/ivanseidel/LinkedList
  **************************************************************************
- This software uses the arduino-timer libary by 
+ This software uses the arduino-timer libary by
  https://github.com/contrem/arduino-timer
  **************************************************************************/
  
 
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266HTTPClient.h>
-#include <ESP8266httpUpdate.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <Update.h>
 #include <WiFiClient.h>
+#include <WebServer.h>
 #include <EEPROM.h>
-#include <ESP8266mDNS.h>
+#include <ESPmDNS.h>
 #include <LinkedList.h>
-#include <SPI.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "SD.h"
+#include "FS.h"
 #include "CRC16.h"
 #include "CRC.h"
 #include "arduino-timer.h"
+#include <HardwareSerial.h>
 
 #define VERSIONA 0
 #define VERSIONB 1
@@ -85,7 +86,7 @@
 #define DIAL2_ADDRESS   300
 #define DIAL3_ADDRESS   350
 #define DIAL4_ADDRESS   400
-#define DIAL5_ADDRESS   450 
+#define DIAL5_ADDRESS   450
 #define DIAL6_ADDRESS   500
 #define DIAL7_ADDRESS   550
 #define DIAL8_ADDRESS   600
@@ -98,15 +99,15 @@
 #define LAST_ADDRESS    800
 
 #define SWITCH_PIN 0       // GPIO0 (programmind mode pin)
-#define LED_PIN LED_BUILTIN          // Status LED
+#define LED_PIN 2        //LED_BUILTIN          // Status LED
 #define DCD_PIN 2          // DCD Carrier Status
 #define RTS_PIN 4         // RTS Request to Send, connect to host's CTS pin
 #define CTS_PIN 5         // CTS Clear to Send, connect to host's RTS pin
 
-#define SW1_PIN A0
-#define SW2_PIN D0
-#define SW3_PIN D3
-#define SW4_PIN D4
+#define SW1_PIN 36 //DOWN
+#define SW2_PIN 39 //BACK
+#define SW3_PIN 34 //ENTER
+#define SW4_PIN 35 //UP
 
 #define MODE_MAIN 0
 #define MODE_MODEM 1
@@ -133,8 +134,17 @@
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+//SD Card Pins
+#define SD_CS 5
+#define SPI_MOSI 23 
+#define SPI_MISO 19
+#define SPI_SCK 18  
+
+#define RXD2 16
+#define TXD2 17
+
 // Global variables
-String build = "v2.11";
+String build = "v3.01";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -168,11 +178,11 @@ String baudDisp[] = { "300", "1200", "2400", "4800", "9600", "19.2k", "38.4k", "
 byte serialSpeed;
 
 String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Playback Text", "Settings" };
-String settingsMenuDisp[] = { "MAIN", "Baud Rate", "Serial Config", "OLED Display", "Default Menu", "Factory Reset", "Reboot", "About" };
+String settingsMenuDisp[] = { "MAIN", "Baud Rate", "Serial Config", "Orientation", "Default Menu", "Factory Reset", "Reboot", "About" };
 String orientationMenuDisp[] = { "Normal", "Flipped" };
 String playbackMenuDisp[] = { "MAIN", "List Files", "Display File", "Playback File", "Evaluate Key", "Terminal Mode" };
 String fileMenuDisp[] = { "MAIN", "List Files on SD", "Send (from SD)", "Recieve (to SD)" };
-String protocolMenuDisp[] = { "BACK", "Raw", "XModem", "YModem", "ZModem", "Kermit" };
+String protocolMenuDisp[] = { "BACK", "Raw", "XModem", "YModem" }; //"ZModem", "Kermit" };
 String defaultModeDisp[] = { "Main Menu", "MODEM Mode" };
 
 bool echo = true;
@@ -180,7 +190,7 @@ bool autoAnswer = false;
 String ssid, password, busyMsg;
 byte ringCount = 0;
 String resultCodes[] = { "OK", "CONNECT", "RING", "NO CARRIER", "ERROR", "", "NO DIALTONE", "BUSY", "NO ANSWER" };
-enum resultCodes_t { R_OK, R_CONNECT, R_RING, R_NOCARRIER, R_ERROR, R_NONE, R_NODIALTONE, R_BUSY, R_NOANSWER };
+enum resultCodes_t { R_OK_STAT, R_CONNECT, R_RING, R_NOCARRIER, R_ERROR, R_NONE, R_NODIALTONE, R_BUSY, R_NOANSWER };
 unsigned long connectTime = 0;
 bool petTranslate = false; // Fix PET MCTerm 1.26C Pet->ASCII encoding to actual ASCII
 bool bHex = false;
@@ -212,7 +222,7 @@ bool recvChanged = false;
 bool speedDialShown = false;
 
 //file transfer related variables
-const int chipSelect = D8;
+const int chipSelect = 5; //D8
 byte packetNumber=0;  //which packet number we're on - YMODEM starts with 0 which contains file name and size.
 int blockSize = 1024;
 int packetSize = 1029;
@@ -233,10 +243,10 @@ String fileName = "";
 String files[100];
 String waitTime;
 bool msgFlag=false;
-bool SW1=false;
-bool SW2=false;
-bool SW3=false;
-bool SW4=false;
+bool BTNUP=false;
+bool BTNDN=false;
+bool BTNEN=false;
+bool BTNBK=false;
 
 const uint8_t PROGMEM wifi_symbol[] = {
   0b00111100,
@@ -266,11 +276,72 @@ const uint8_t PROGMEM phon_symbol[] = {
 #define DONT 0xfe
 
 WiFiClient tcpClient;
-WiFiServer tcpServer(0);        // port will be set via .begin(port)
-ESP8266WebServer webServer(80);
+WiFiServer tcpServer(LISTEN_PORT);        // port will be set via .begin(port)
+WebServer webServer(80);
 MDNSResponder mdns;
+HardwareSerial PhysicalSerial(2);
 
 void(* resetFunc) (void) = 0; //declare reset function @ address 0
+
+void SerialPrintLn(String s) {
+  Serial.println(s);
+  PhysicalSerial.println(s);
+}
+
+void SerialPrintLn(char c, int format) {
+  Serial.println(c, format);
+  PhysicalSerial.println(c, format);
+}
+
+void SerialPrintLn(char c) {
+  Serial.println(c);
+  PhysicalSerial.println(c);
+}
+
+void SerialPrint(String s) {
+  Serial.print(s);
+  PhysicalSerial.print(s);
+}
+
+void SerialPrint(char c) {
+  Serial.print(c);
+  PhysicalSerial.print(c);
+}
+
+void SerialPrint(char c, int format) {
+  Serial.print(c, format);
+  PhysicalSerial.print(c, format);
+}
+
+void SerialPrintLn() {
+  Serial.println();
+  PhysicalSerial.println();
+}
+
+void SerialFlush() {
+  Serial.flush();
+  PhysicalSerial.flush();
+}
+
+int SerialAvailable() {
+  int c = Serial.available();
+  if (c==0)
+    c = PhysicalSerial.available();
+  return c;
+}
+
+int SerialRead() {
+  int c = Serial.available();
+  if (c>0)
+    return Serial.read();
+  else
+    return PhysicalSerial.read();
+}
+ 
+void SerialWrite(int c) {
+  Serial.write(c);
+  PhysicalSerial.write(c);
+}
 
 String connectTimeString() {
   unsigned long now = millis();
@@ -307,7 +378,7 @@ void writeSettings() {
   EEPROM.write(ORIENTATION_ADDRESS, byte(dispOrientation));
   EEPROM.write(DEFAULTMODE_ADDRESS, byte(defaultMode));
   EEPROM.write(SERIALCONFIG_ADDRESS, serialConfig);
-    
+   
   for (int i = 0; i < 10; i++) {
     setEEPROM(speedDials[i], speedDialAddresses[i], 50);
   }
@@ -367,7 +438,7 @@ void defaultEEPROM() {
   setEEPROM("blackflag.acid.org:23", speedDialAddresses[7], 50);
   setEEPROM("cavebbs.homeip.net:23", speedDialAddresses[8], 50);
   setEEPROM("vert.synchro.net:23", speedDialAddresses[9], 50);
-  
+ 
   setEEPROM("SORRY, SYSTEM IS CURRENTLY BUSY. PLEASE TRY AGAIN LATER.", BUSY_MSG_ADDRESS, BUSY_MSG_LEN);
 
   EEPROM.write(ORIENTATION_ADDRESS, 0x00);
@@ -383,46 +454,46 @@ String getEEPROM(int startAddress, int len) {
       break;
     }
     myString += char(EEPROM.read(i));
-    //Serial.print(char(EEPROM.read(i)));
+    //SerialPrint(char(EEPROM.read(i)));
   }
-  //Serial.println();
+  //SerialPrintLn();
   return myString;
 }
 
 void setEEPROM(String inString, int startAddress, int maxLen) {
   for (int i = startAddress; i < inString.length() + startAddress; i++) {
     EEPROM.write(i, inString[i - startAddress]);
-    //Serial.print(i, DEC); Serial.print(": "); Serial.println(inString[i - startAddress]);
-    //if (EEPROM.read(i) != inString[i - startAddress]) { Serial.print(" (!)"); }
-    //Serial.println();
+    //SerialPrint(i, DEC); SerialPrint(": "); SerialPrintLn(inString[i - startAddress]);
+    //if (EEPROM.read(i) != inString[i - startAddress]) { SerialPrint(" (!)"); }
+    //SerialPrintLn();
   }
   // null pad the remainder of the memory space
   for (int i = inString.length() + startAddress; i < maxLen + startAddress; i++) {
     EEPROM.write(i, 0x00);
-    //Serial.print(i, DEC); Serial.println(": 0x00");
+    //SerialPrint(i, DEC); SerialPrintLn(": 0x00");
   }
 }
 
 void sendResult(int resultCode) {
-  Serial.print("\r\n");
+  SerialPrint("\r\n");
   if (verboseResults == 0) {  
-    Serial.println(resultCode);
+    SerialPrintLn(resultCode);
     return;
   }
   if (resultCode == R_CONNECT) {
-    Serial.print(String(resultCodes[R_CONNECT]) + " " + String(bauds[serialSpeed]));
+    SerialPrint(String(resultCodes[R_CONNECT]) + " " + String(bauds[serialSpeed]));
   } else if (resultCode == R_NOCARRIER) {
-    Serial.print(String(resultCodes[R_NOCARRIER]) + " (" + connectTimeString() + ")");
+    SerialPrint(String(resultCodes[R_NOCARRIER]) + " (" + connectTimeString() + ")");
   } else {
-    Serial.print(String(resultCodes[resultCode]));
+    SerialPrint(String(resultCodes[resultCode]));
   }
-  Serial.print("\r\n");
+  SerialPrint("\r\n");
 }
 
 void sendString(String msg) {
-  Serial.print("\r\n");
-  Serial.print(msg);
-  Serial.print("\r\n");
+  SerialPrint("\r\n");
+  SerialPrint(msg);
+  SerialPrint("\r\n");
 }
 
 // Hold for 5 seconds to switch to 300 baud
@@ -436,12 +507,13 @@ int checkButton() {
     yield();
   }
   if (millis() - time > 5000) {
-    Serial.flush();
-    Serial.end();
+    PhysicalSerial.flush();
+    PhysicalSerial.end();
     serialSpeed = 0;
     delay(100);
-    Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
-    sendResult(R_OK);
+    PhysicalSerial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
+    
+    sendResult(R_OK_STAT);
     while (digitalRead(SWITCH_PIN) == LOW) {
       delay(50);
       digitalWrite(LED_PIN, !digitalRead(LED_PIN));
@@ -455,12 +527,12 @@ int checkButton() {
 
 void connectWiFi() {
   if (ssid == "" || password == "") {
-    Serial.println("CONFIGURE SSID AND PASSWORD. TYPE AT? FOR HELP.");
+    SerialPrintLn("CONFIGURE SSID AND PASSWORD. TYPE AT? FOR HELP.");
     showMessage("CONFIGURE SSID\nAND PASSWORD\nOVER SERIAL");
     return;
   }
   WiFi.begin(ssid.c_str(), password.c_str());
-  Serial.print("\nCONNECTING TO SSID "); Serial.print(ssid);
+  SerialPrint("\nCONNECTING TO SSID "); SerialPrint(ssid);
   showMessage("* PLEASE WAIT *\n CONNECTING TO\n" + ssid);
   uint8_t i = 0;
   while (WiFi.status() != WL_CONNECTED && i++ < 20) {
@@ -468,11 +540,11 @@ void connectWiFi() {
     delay(250);
     digitalWrite(LED_PIN, HIGH);
     delay(250);
-    Serial.print(".");
+    SerialPrint(".");
   }
-  Serial.println();
+  SerialPrintLn();
   if (i == 21) {
-    Serial.print("COULD NOT CONNECT TO "); Serial.println(ssid);
+    SerialPrint("COULD NOT CONNECT TO "); SerialPrintLn(ssid);
     modemMenuMsg();
     display.println("COULD NOT CONNECT\nTO WIFI.\n");
     display.display();
@@ -480,10 +552,11 @@ void connectWiFi() {
     WiFi.disconnect();
     showWifiIcon();
   } else {
-    Serial.print("CONNECTED TO "); Serial.println(WiFi.SSID());
-    Serial.print("IP ADDRESS: "); Serial.println(WiFi.localIP());
+    SerialPrint("CONNECTED TO "); SerialPrintLn(WiFi.SSID());
+    SerialPrint("IP ADDRESS: "); SerialPrintLn(WiFi.localIP());
     if (tcpServerPort > 0) {
-      Serial.print("LISTENING ON PORT "); Serial.println(tcpServerPort);
+      SerialPrint("LISTENING ON PORT "); SerialPrintLn(tcpServerPort);
+      tcpServer.begin();
     }
     modemConnected();
     showWifiIcon();
@@ -494,10 +567,10 @@ void connectWiFi() {
 void showWifiIcon() {
   if (WiFi.status() == WL_CONNECTED) {
     digitalWrite(LED_PIN, LOW);  // on
-    display.drawBitmap(72, 1, wifi_symbol, 8, 7, SSD1306_BLACK);
+    display.drawBitmap(72, 4, wifi_symbol, 8, 7, SSD1306_BLACK);
   } else {
     digitalWrite(LED_PIN, HIGH); //off
-    display.fillRect(72, 1, 8, 7, SSD1306_WHITE);
+    display.fillRect(72, 4, 8, 7, SSD1306_WHITE);
   }
   display.display();
 }
@@ -526,19 +599,20 @@ void setBaudRate(int inSpeed) {
     return;
   }
   if (foundBaud == serialSpeed) {
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
     return;
   }
-  Serial.print("SWITCHING SERIAL PORT TO ");
-  Serial.print(inSpeed);
-  Serial.println(" IN 5 SECONDS");
+  SerialPrint("SWITCHING SERIAL PORT TO ");
+  SerialPrint(inSpeed);
+  SerialPrintLn(" IN 5 SECONDS");
   delay(5000);
-  Serial.end();
+  PhysicalSerial.end();
   delay(200);
-  Serial.begin(bauds[foundBaud], (SerialConfig)bits[serialConfig]);
+  PhysicalSerial.begin(bauds[foundBaud], (SerialConfig)bits[serialConfig], RXD2, TXD2);
+
   serialSpeed = foundBaud;
   delay(200);
-  sendResult(R_OK);
+  sendResult(R_OK_STAT);
 }
 
 void setCarrier(byte carrier) {
@@ -549,211 +623,211 @@ void setCarrier(byte carrier) {
 
 void showCallIcon() {
   if (callConnected)
-    display.drawBitmap(85, 1, phon_symbol, 8, 7, SSD1306_BLACK);
+    display.drawBitmap(85, 4, phon_symbol, 8, 7, SSD1306_BLACK);
   else
-    display.fillRect(85, 1, 8, 7, SSD1306_WHITE);
+    display.fillRect(85, 4, 8, 7, SSD1306_WHITE);
   display.display();
 }
 
 void displayNetworkStatus() {
-  Serial.print("WIFI STATUS: ");
+  SerialPrint("WIFI STATUS: ");
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("CONNECTED");
+    SerialPrintLn("CONNECTED");
   }
   if (WiFi.status() == WL_IDLE_STATUS) {
-    Serial.println("OFFLINE");
+    SerialPrintLn("OFFLINE");
   }
   if (WiFi.status() == WL_CONNECT_FAILED) {
-    Serial.println("CONNECT FAILED");
+    SerialPrintLn("CONNECT FAILED");
   }
   if (WiFi.status() == WL_NO_SSID_AVAIL) {
-    Serial.println("SSID UNAVAILABLE");
+    SerialPrintLn("SSID UNAVAILABLE");
   }
   if (WiFi.status() == WL_CONNECTION_LOST) {
-    Serial.println("CONNECTION LOST");
+    SerialPrintLn("CONNECTION LOST");
   }
   if (WiFi.status() == WL_DISCONNECTED) {
-    Serial.println("DISCONNECTED");
+    SerialPrintLn("DISCONNECTED");
   }
   if (WiFi.status() == WL_SCAN_COMPLETED) {
-    Serial.println("SCAN COMPLETED");
+    SerialPrintLn("SCAN COMPLETED");
   }
   yield();
 
-  Serial.print("SSID.......: "); Serial.println(WiFi.SSID());
+  SerialPrint("SSID.......: "); SerialPrintLn(WiFi.SSID());
 
-  //  Serial.print("ENCRYPTION: ");
+  //  SerialPrint("ENCRYPTION: ");
   //  switch(WiFi.encryptionType()) {
   //    case 2:
-  //      Serial.println("TKIP (WPA)");
+  //      SerialPrintLn("TKIP (WPA)");
   //      break;
   //    case 5:
-  //      Serial.println("WEP");
+  //      SerialPrintLn("WEP");
   //      break;
   //    case 4:
-  //      Serial.println("CCMP (WPA)");
+  //      SerialPrintLn("CCMP (WPA)");
   //      break;
   //    case 7:
-  //      Serial.println("NONE");
+  //      SerialPrintLn("NONE");
   //      break;
   //    case 8:
-  //      Serial.println("AUTO");
+  //      SerialPrintLn("AUTO");
   //      break;
   //    default:
-  //      Serial.println("UNKNOWN");
+  //      SerialPrintLn("UNKNOWN");
   //      break;
   //  }
 
   byte mac[6];
   WiFi.macAddress(mac);
-  Serial.print("MAC ADDRESS: ");
-  Serial.print(mac[0], HEX);
-  Serial.print(":");
-  Serial.print(mac[1], HEX);
-  Serial.print(":");
-  Serial.print(mac[2], HEX);
-  Serial.print(":");
-  Serial.print(mac[3], HEX);
-  Serial.print(":");
-  Serial.print(mac[4], HEX);
-  Serial.print(":");
-  Serial.println(mac[5], HEX);
+  SerialPrint("MAC ADDRESS: ");
+  SerialPrint(mac[0], HEX);
+  SerialPrint(":");
+  SerialPrint(mac[1], HEX);
+  SerialPrint(":");
+  SerialPrint(mac[2], HEX);
+  SerialPrint(":");
+  SerialPrint(mac[3], HEX);
+  SerialPrint(":");
+  SerialPrint(mac[4], HEX);
+  SerialPrint(":");
+  SerialPrintLn(mac[5], HEX);
   yield();
 
-  Serial.print("IP ADDRESS.: "); Serial.println(WiFi.localIP()); yield();
-  Serial.print("GATEWAY....: "); Serial.println(WiFi.gatewayIP()); yield();
-  Serial.print("SUBNET MASK: "); Serial.println(WiFi.subnetMask()); yield();
-  Serial.print("SERVER PORT: "); Serial.println(tcpServerPort); yield();
-  Serial.print("WEB CONFIG.: HTTP://"); Serial.println(WiFi.localIP()); yield();
-  Serial.print("CALL STATUS: "); yield();
+  SerialPrint("IP ADDRESS.: "); SerialPrintLn(WiFi.localIP()); yield();
+  SerialPrint("GATEWAY....: "); SerialPrintLn(WiFi.gatewayIP()); yield();
+  SerialPrint("SUBNET MASK: "); SerialPrintLn(WiFi.subnetMask()); yield();
+  SerialPrint("SERVER PORT: "); SerialPrintLn(tcpServerPort); yield();
+  SerialPrint("WEB CONFIG.: HTTP://"); SerialPrintLn(WiFi.localIP()); yield();
+  SerialPrint("CALL STATUS: "); yield();
   if (callConnected) {
-    Serial.print("CONNECTED TO "); Serial.println(ipToString(tcpClient.remoteIP())); yield();
-    Serial.print("CALL LENGTH: "); Serial.println(connectTimeString()); yield();
+    SerialPrint("CONNECTED TO "); SerialPrintLn(ipToString(tcpClient.remoteIP())); yield();
+    SerialPrint("CALL LENGTH: "); SerialPrintLn(connectTimeString()); yield();
   } else {
   }
 }
 
 void displayCurrentSettings() {
-  Serial.println("ACTIVE PROFILE:"); yield();
-  Serial.print("BAUD: "); Serial.println(bauds[serialSpeed]); yield();
-  Serial.print("SSID: "); Serial.println(ssid); yield();
-  Serial.print("PASS: "); Serial.println(password); yield();
-  //Serial.print("SERVER TCP PORT: "); Serial.println(tcpServerPort); yield();
-  Serial.print("BUSY MSG: "); Serial.println(busyMsg); yield();
-  Serial.print("E"); Serial.print(echo); Serial.print(" "); yield();
-  Serial.print("V"); Serial.print(verboseResults); Serial.print(" "); yield();
-  Serial.print("&K"); Serial.print(flowControl); Serial.print(" "); yield();
-  Serial.print("&P"); Serial.print(pinPolarity); Serial.print(" "); yield();
-  Serial.print("NET"); Serial.print(telnet); Serial.print(" "); yield();
-  Serial.print("PET"); Serial.print(petTranslate); Serial.print(" "); yield();
-  Serial.print("S0:"); Serial.print(autoAnswer); Serial.print(" "); yield();
-  Serial.print("ORIENT:"); Serial.print(dispOrientation); Serial.print(" "); yield();
-  Serial.print("DFLTMENU:"); Serial.print(defaultMode); Serial.print(" "); yield();
-  Serial.println(); yield();
+  SerialPrintLn("ACTIVE PROFILE:"); yield();
+  SerialPrint("BAUD: "); SerialPrintLn(bauds[serialSpeed]); yield();
+  SerialPrint("SSID: "); SerialPrintLn(ssid); yield();
+  SerialPrint("PASS: "); SerialPrintLn(password); yield();
+  //SerialPrint("SERVER TCP PORT: "); SerialPrintLn(tcpServerPort); yield();
+  SerialPrint("BUSY MSG: "); SerialPrintLn(busyMsg); yield();
+  SerialPrint("E"); SerialPrint(echo); SerialPrint(" "); yield();
+  SerialPrint("V"); SerialPrint(verboseResults); SerialPrint(" "); yield();
+  SerialPrint("&K"); SerialPrint(flowControl); SerialPrint(" "); yield();
+  SerialPrint("&P"); SerialPrint(pinPolarity); SerialPrint(" "); yield();
+  SerialPrint("NET"); SerialPrint(telnet); SerialPrint(" "); yield();
+  SerialPrint("PET"); SerialPrint(petTranslate); SerialPrint(" "); yield();
+  SerialPrint("S0:"); SerialPrint(autoAnswer); SerialPrint(" "); yield();
+  SerialPrint("ORIENT:"); SerialPrint(dispOrientation); SerialPrint(" "); yield();
+  SerialPrint("DFLTMENU:"); SerialPrint(defaultMode); SerialPrint(" "); yield();
+  SerialPrintLn(); yield();
 
-  Serial.println("SPEED DIAL:");
+  SerialPrintLn("SPEED DIAL:");
   for (int i = 0; i < 10; i++) {
-    Serial.print(i); Serial.print(": "); Serial.println(speedDials[i]);
+    SerialPrint(i); SerialPrint(": "); SerialPrintLn(speedDials[i]);
     yield();
   }
-  Serial.println();
+  SerialPrintLn();
 }
 
 void displayStoredSettings() {
-  Serial.println("STORED PROFILE:"); yield();
-  Serial.print("BAUD: "); Serial.println(bauds[EEPROM.read(BAUD_ADDRESS)]); yield();
-  Serial.print("SSID: "); Serial.println(getEEPROM(SSID_ADDRESS, SSID_LEN)); yield();
-  Serial.print("PASS: "); Serial.println(getEEPROM(PASS_ADDRESS, PASS_LEN)); yield();
-  //Serial.print("SERVER TCP PORT: "); Serial.println(word(EEPROM.read(SERVER_PORT_ADDRESS), EEPROM.read(SERVER_PORT_ADDRESS+1))); yield();
-  Serial.print("BUSY MSG: "); Serial.println(getEEPROM(BUSY_MSG_ADDRESS, BUSY_MSG_LEN)); yield();
-  Serial.print("E"); Serial.print(EEPROM.read(ECHO_ADDRESS)); Serial.print(" "); yield();
-  Serial.print("V"); Serial.print(EEPROM.read(VERBOSE_ADDRESS)); Serial.print(" "); yield();
-  Serial.print("&K"); Serial.print(EEPROM.read(FLOW_CONTROL_ADDRESS)); Serial.print(" "); yield();
-  Serial.print("&P"); Serial.print(EEPROM.read(PIN_POLARITY_ADDRESS)); Serial.print(" "); yield();
-  Serial.print("NET"); Serial.print(EEPROM.read(TELNET_ADDRESS)); Serial.print(" "); yield();
-  Serial.print("PET"); Serial.print(EEPROM.read(PET_TRANSLATE_ADDRESS)); Serial.print(" "); yield();
-  Serial.print("S0:"); Serial.print(EEPROM.read(AUTO_ANSWER_ADDRESS)); Serial.print(" "); yield();
-  Serial.print("ORIENT:"); Serial.print(EEPROM.read(ORIENTATION_ADDRESS)); Serial.print(" "); yield();
-  Serial.println(); yield();
+  SerialPrintLn("STORED PROFILE:"); yield();
+  SerialPrint("BAUD: "); SerialPrintLn(bauds[EEPROM.read(BAUD_ADDRESS)]); yield();
+  SerialPrint("SSID: "); SerialPrintLn(getEEPROM(SSID_ADDRESS, SSID_LEN)); yield();
+  SerialPrint("PASS: "); SerialPrintLn(getEEPROM(PASS_ADDRESS, PASS_LEN)); yield();
+  //SerialPrint("SERVER TCP PORT: "); SerialPrintLn(word(EEPROM.read(SERVER_PORT_ADDRESS), EEPROM.read(SERVER_PORT_ADDRESS+1))); yield();
+  SerialPrint("BUSY MSG: "); SerialPrintLn(getEEPROM(BUSY_MSG_ADDRESS, BUSY_MSG_LEN)); yield();
+  SerialPrint("E"); SerialPrint(EEPROM.read(ECHO_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("V"); SerialPrint(EEPROM.read(VERBOSE_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("&K"); SerialPrint(EEPROM.read(FLOW_CONTROL_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("&P"); SerialPrint(EEPROM.read(PIN_POLARITY_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("NET"); SerialPrint(EEPROM.read(TELNET_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("PET"); SerialPrint(EEPROM.read(PET_TRANSLATE_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("S0:"); SerialPrint(EEPROM.read(AUTO_ANSWER_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("ORIENT:"); SerialPrint(EEPROM.read(ORIENTATION_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrintLn(); yield();
 
-  Serial.println("STORED SPEED DIAL:");
+  SerialPrintLn("STORED SPEED DIAL:");
   for (int i = 0; i < 10; i++) {
-    Serial.print(i); Serial.print(": "); Serial.println(getEEPROM(speedDialAddresses[i], 50));
+    SerialPrint(i); SerialPrint(": "); SerialPrintLn(getEEPROM(speedDialAddresses[i], 50));
     yield();
   }
-  Serial.println();
+  SerialPrintLn();
 }
 
 void waitForSpace() {
-  Serial.print("PRESS SPACE");
+  SerialPrint("PRESS SPACE");
   char c = 0;
   while (c != 0x20) {
-    if (Serial.available() > 0) {
-      c = Serial.read();
+    if (SerialAvailable() > 0) {
+      c = SerialRead();
       if (petTranslate == true){
         if (c > 127) c-= 128;
       }
     }
   }
-  Serial.print("\r");
+  SerialPrint("\r");
 }
 
 void waitForEnter() {
-  Serial.print("PRESS ENTER");
+  SerialPrint("PRESS ENTER");
   char c = 0;
   while (c != 10 && c != 13) {
-    if (Serial.available() > 0) {
-      c = Serial.read();
+    if (SerialAvailable() > 0) {
+      c = SerialRead();
       if (petTranslate == true){
         if (c > 127) c-= 128;
       }
     }
   }
-  Serial.print("\r");
+  SerialPrint("\r");
 }
 
 void displayHelp() {
-  
-  Serial.println("AT COMMAND SUMMARY:"); yield();
-  Serial.println("DIAL HOST......: ATDTHOST:PORT"); yield();
-  Serial.println("                 ATDTNNNNNNN (N=0-9)"); yield();
-  Serial.println("SPEED DIAL.....: ATDSN (N=0-9)"); yield();
-  Serial.println("SET SPEED DIAL.: AT&ZN=HOST:PORT (N=0-9)"); yield();
-  Serial.println("HANDLE TELNET..: ATNETN (N=0,1)"); yield();
-  Serial.println("PET MCTERM TR..: ATPETN (N=0,1)"); yield();
-  Serial.println("NETWORK INFO...: ATI"); yield();
-  Serial.println("HTTP GET.......: ATGET<URL>"); yield();
-  //Serial.println("SERVER PORT....: AT$SP=N (N=1-65535)"); yield();
-  Serial.println("AUTO ANSWER....: ATS0=N (N=0,1)"); yield();
-  Serial.println("SET BUSY MSG...: AT$BM=YOUR BUSY MESSAGE"); yield();
-  Serial.println("LOAD NVRAM.....: ATZ"); yield();
-  Serial.println("SAVE TO NVRAM..: AT&W"); yield();
-  Serial.println("SHOW SETTINGS..: AT&V"); yield();
-  Serial.println("FACT. DEFAULTS.: AT&F"); yield();
-  Serial.println("PIN POLARITY...: AT&PN (N=0/INV,1/NORM)"); yield();
-  Serial.println("ECHO OFF/ON....: ATE0 / ATE1"); yield();
-  Serial.println("VERBOSE OFF/ON.: ATV0 / ATV1"); yield();
-  Serial.println("SET SSID.......: AT$SSID=WIFISSID"); yield();
-  Serial.println("SET PASSWORD...: AT$PASS=WIFIPASSWORD"); yield();
+ 
+  SerialPrintLn("AT COMMAND SUMMARY:"); yield();
+  SerialPrintLn("DIAL HOST......: ATDTHOST:PORT"); yield();
+  SerialPrintLn("                 ATDTNNNNNNN (N=0-9)"); yield();
+  SerialPrintLn("SPEED DIAL.....: ATDSN (N=0-9)"); yield();
+  SerialPrintLn("SET SPEED DIAL.: AT&ZN=HOST:PORT (N=0-9)"); yield();
+  SerialPrintLn("HANDLE TELNET..: ATNETN (N=0,1)"); yield();
+  SerialPrintLn("PET MCTERM TR..: ATPETN (N=0,1)"); yield();
+  SerialPrintLn("NETWORK INFO...: ATI"); yield();
+  SerialPrintLn("HTTP GET.......: ATGET<URL>"); yield();
+  //SerialPrintLn("SERVER PORT....: AT$SP=N (N=1-65535)"); yield();
+  SerialPrintLn("AUTO ANSWER....: ATS0=N (N=0,1)"); yield();
+  SerialPrintLn("SET BUSY MSG...: AT$BM=YOUR BUSY MESSAGE"); yield();
+  SerialPrintLn("LOAD NVRAM.....: ATZ"); yield();
+  SerialPrintLn("SAVE TO NVRAM..: AT&W"); yield();
+  SerialPrintLn("SHOW SETTINGS..: AT&V"); yield();
+  SerialPrintLn("FACT. DEFAULTS.: AT&F"); yield();
+  SerialPrintLn("PIN POLARITY...: AT&PN (N=0/INV,1/NORM)"); yield();
+  SerialPrintLn("ECHO OFF/ON....: ATE0 / ATE1"); yield();
+  SerialPrintLn("VERBOSE OFF/ON.: ATV0 / ATV1"); yield();
+  SerialPrintLn("SET SSID.......: AT$SSID=WIFISSID"); yield();
+  SerialPrintLn("SET PASSWORD...: AT$PASS=WIFIPASSWORD"); yield();
   waitForSpace();
-  Serial.println("SET BAUD RATE..: AT$SB=N (3,12,24,48,96"); yield();
-  Serial.println("                 192,384,576,1152)*100"); yield();
-  Serial.println("SET PORT.......: AT$SP=PORT"); yield();
-  Serial.println("FLOW CONTROL...: AT&KN (N=0/N,1/HW,2/SW)"); yield();
-  Serial.println("WIFI OFF/ON....: ATC0 / ATC1"); yield();
-  Serial.println("HANGUP.........: ATH"); yield();
-  Serial.println("ENTER CMD MODE.: +++"); yield();
-  Serial.println("EXIT CMD MODE..: ATO"); yield();
-  Serial.println("FIRMWARE CHECK.: ATFC"); yield();
-  Serial.println("FIRMWARE UPDATE: ATFU"); yield();
-  Serial.println("EXIT MODEM MODE: ATX"); yield();
-  Serial.println("QUERY MOST COMMANDS FOLLOWED BY '?'"); yield();
+  SerialPrintLn("SET BAUD RATE..: AT$SB=N (3,12,24,48,96"); yield();
+  SerialPrintLn("                 192,384,576,1152)*100"); yield();
+  SerialPrintLn("SET PORT.......: AT$SP=PORT"); yield();
+  SerialPrintLn("FLOW CONTROL...: AT&KN (N=0/N,1/HW,2/SW)"); yield();
+  SerialPrintLn("WIFI OFF/ON....: ATC0 / ATC1"); yield();
+  SerialPrintLn("HANGUP.........: ATH"); yield();
+  SerialPrintLn("ENTER CMD MODE.: +++"); yield();
+  SerialPrintLn("EXIT CMD MODE..: ATO"); yield();
+  SerialPrintLn("FIRMWARE CHECK.: ATFC"); yield();
+  SerialPrintLn("FIRMWARE UPDATE: ATFU"); yield();
+  SerialPrintLn("EXIT MODEM MODE: ATX"); yield();
+  SerialPrintLn("QUERY MOST COMMANDS FOLLOWED BY '?'"); yield();
 }
 
 void storeSpeedDial(byte num, String location) {
   //if (num < 0 || num > 9) { return; }
   speedDials[num] = location;
-  //Serial.print("STORED "); Serial.print(num); Serial.print(": "); Serial.println(location);
+  //SerialPrint("STORED "); SerialPrint(num); SerialPrint(": "); SerialPrintLn(location);
 }
 
 
@@ -781,13 +855,13 @@ void mainMenu(bool arrow) {
 //returns true/false depending on if default menu item should be set
 bool showHeader(String menu, int dispMode) {
   bool setDef = false;
-  
+ 
   if (dispMode!=MENU_DISP) {
-    Serial.println();
-    Serial.println();
-    Serial.println("-=-=- " + menu + " MENU -=-=-");
+    SerialPrintLn();
+    SerialPrintLn();
+    SerialPrintLn("-=-=- " + menu + " MENU -=-=-");
   }
-  
+ 
   //21 chars wide x 8 lines);
   if (lastMenu != menuMode || msgFlag)
   { //clear the whole display, reset the selction
@@ -799,35 +873,54 @@ bool showHeader(String menu, int dispMode) {
     display.drawLine(0,0,0,63,SSD1306_WHITE);
     display.drawLine(127,0,127,63,SSD1306_WHITE);
     display.drawLine(0,63,127,63,SSD1306_WHITE);
+    display.drawLine(0,16,127,16,SSD1306_WHITE);
   } else {
     //just clear the selection area
-    display.fillRect(6, 8, 8, 52, SSD1306_BLACK);
+    display.fillRect(6, 17, 8, 46, SSD1306_BLACK);
   }
  
-  display.fillRect(0, 0, 127, 9, SSD1306_WHITE);
-  display.setCursor(1, 1);     // Start at top-left corner
+  //display.fillRect(0, 0, 127, 9, SSD1306_WHITE);
+  display.fillRect(0, 0, 127, 16, SSD1306_WHITE); //fill in the yellow header area
+  
+  display.drawLine(1, 1, 126, 1, SSD1306_BLACK);  //add an outline to fill this
+  display.drawLine(1, 14, 126, 14, SSD1306_BLACK); //somewhat annoyingly large area
+  display.drawLine(1, 1, 1, 14, SSD1306_BLACK);
+  display.drawLine(126, 1, 126, 14, SSD1306_BLACK);
+  
+
+  //display.drawLine(0,0,0,63,SSD1306_WHITE);
+    //display.setFont(&FreeMono9pt7b);
+  display.setCursor(4, 4);     // Start at top-left corner
   display.setTextColor(SSD1306_BLACK); // Draw white text
   String line = "WiRSa " + menu;
   display.print(line);  
   String bps = baudDisp[serialSpeed];
-  display.println(padLeft(bps,21-line.length()));
+  
+  display.print(padLeft(bps,20-line.length()));
   display.setTextColor(SSD1306_WHITE); // Draw white text
-  display.setCursor(0, 13);     // Start at top-left corner
+  //display.setCursor(0, 13);     // Start at top-left corner
+  display.setCursor(0, 17);     // Start at top-left corner
+  //display.setFont();
   display.display();
 
   return setDef;
 }
 
 void showMessage(String message) {
-  display.fillRect(1, 10, 125, 53, SSD1306_BLACK);
-  display.drawRect(15, 12, 97, 40, SSD1306_WHITE);
-  display.fillRect(17, 14, 93, 36, SSD1306_WHITE);
+  //display.fillRect(1, 10, 125, 53, SSD1306_BLACK);
+  //display.drawRect(15, 12, 97, 40, SSD1306_WHITE);
+  //display.fillRect(17, 14, 93, 36, SSD1306_WHITE);
+  display.fillRect(1, 17, 125, 44, SSD1306_BLACK);
+  display.drawRect(15, 18, 97, 43, SSD1306_WHITE);
+  display.fillRect(17, 20, 93, 39, SSD1306_WHITE);
+
   int x = 19;
-  int y = 16;
+  //int y = 16;
+  int y = 21;
   int c= 0;
   display.setCursor(x,y);
   display.setTextColor(SSD1306_BLACK);
-  
+ 
   for (int i = 0; i < message.length(); i++) {
     if (message[i] == '\n') {
       x = 19; y += 8; c = 0;
@@ -858,28 +951,32 @@ void updateXferMessage() {
 void showMenu(String menuName, String options[], int sz, int dispMode, int defaultSel) {
   if (showHeader(menuName, dispMode))
     menuIdx = defaultSel;
-  
+ 
   menuCnt = sz;
 
   int menuStart=0;
   int menuEnd=0;
 
-  if (menuCnt<=6)
+  int maxItems=5; //can only show 5 menu items per page
+
+  if (menuCnt<=maxItems)
     menuEnd=menuCnt;
   else {
     //clear out menu area
-    display.fillRect(1, 9, 126, 54, SSD1306_BLACK);
-    
+    display.fillRect(1, 17, 126, 46, SSD1306_BLACK);
+   
     menuStart=menuIdx;
-    if (menuIdx<6)
+    if (menuIdx<maxItems)
       menuStart=0;
     else
-      menuStart=menuIdx-5;
-    
-    menuEnd=menuStart+6;
+      menuStart=menuIdx-(maxItems-1);
+   
+    menuEnd=menuStart+maxItems;
     if (menuEnd>menuCnt)
-      menuEnd=menuCnt; 
+      menuEnd=menuCnt;
   }
+  
+  display.setCursor(1, 19);
   
   for (int i=menuStart;i<menuEnd;i++) {
     menuOption(i, options[i]);
@@ -891,21 +988,21 @@ void showMenu(String menuName, String options[], int sz, int dispMode, int defau
       if (dispMode==MENU_NUM)
       {
         if (c==2) {
-          Serial.println(" [" + String((char)(65+i)) + "] " + options[i]);
+          SerialPrintLn(" [" + String((char)(65+i)) + "] " + options[i]);
           c=0;
         }          
         else {
-          Serial.print(" [" + String((char)(65+i)) + "] " + padRight(options[i], 15));
+          SerialPrint(" [" + String((char)(65+i)) + "] " + padRight(options[i], 15));
           c++;
         }
       }
       else //MENU_BOTH
-        Serial.println(" [" + options[i].substring(0,1) + "]" + options[i].substring(1));
+        SerialPrintLn(" [" + options[i].substring(0,1) + "]" + options[i].substring(1));
     }
   }
-  
+ 
   if (menuStart>0) {
-    display.setCursor(120, 13);
+    display.setCursor(120, 19);
     display.write(0x1E);
   }
 
@@ -917,8 +1014,8 @@ void showMenu(String menuName, String options[], int sz, int dispMode, int defau
   display.display();
 
   if (dispMode!=MENU_DISP) {
-    Serial.println();
-    Serial.print("> ");
+    SerialPrintLn();
+    SerialPrint("> ");
   }
 }
 
@@ -938,7 +1035,7 @@ void menuOption(int idx, String item) {
 void setup() {
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
+    SerialPrintLn(F("SSD1306 allocation failed"));
     for(;;); // Don't proceed, loop forever
   }
   display.display();
@@ -948,11 +1045,18 @@ void setup() {
   delay(2000); // Pause for 2 seconds
   display.clearDisplay();
   display.setCursor(0, 0);     // Start at top-left corner
-  
+ 
   pinMode(LED_PIN, OUTPUT);
+  pinMode(SD_CS, OUTPUT);
+  digitalWrite(SD_CS, HIGH);
+  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
   digitalWrite(LED_PIN, HIGH); // off
   pinMode(SWITCH_PIN, INPUT);
   digitalWrite(SWITCH_PIN, HIGH);
+  pinMode(SW1_PIN, INPUT);
+  pinMode(SW2_PIN, INPUT);
+  pinMode(SW3_PIN, INPUT);
+  pinMode(SW4_PIN, INPUT);
   //pinMode(DCD_PIN, OUTPUT);
   //pinMode(RTS_PIN, OUTPUT);
   //digitalWrite(RTS_PIN, HIGH); // ready to receive data
@@ -981,17 +1085,13 @@ void setup() {
   else
     display.setRotation(2);
 
-  
-  Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
-  pinMode(SW1_PIN, INPUT);
-  pinMode(SW2_PIN, INPUT);
-  pinMode(SW3_PIN, INPUT);
-  pinMode(SW4_PIN, INPUT);
-  Serial.println("");
-  Serial.println("-= RetroDisks  WiRSa =-");
+ 
+  Serial.begin(115200, SERIAL_8N1); //USB Serial 
+  PhysicalSerial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig], RXD2, TXD2); //Physical Serial
 
-  if (tcpServerPort > 0) tcpServer.begin(tcpServerPort);
-
+  SerialPrintLn("");
+  SerialPrintLn("-= RetroDisks  WiRSa =-");
+ 
   if (defaultMode==MODE_MAIN)
     mainMenu(false);
   else if (defaultMode==MODE_MODEM)
@@ -1091,33 +1191,28 @@ void led_on()
 
 void readSwitches()
 { //these digital pins are pulled HIGH, pushed=LOW
-  if (dispOrientation==D_NORMAL) {
-    SW1 = (analogRead(A0) < 100); //must read a0 as an analog, < 100 = pushed
-    delay(3);   // required after analogRead to avoid WiFi disconnects (known ESP8266 issue)
-    SW2 = !digitalRead(D0); 
-  } else {
-    SW2 = (analogRead(A0) < 100); //must read a0 as an analog, < 100 = pushed
-    delay(3);   // required after analogRead to avoid WiFi disconnects (known ESP8266 issue)
-    SW1 = !digitalRead(D0);     
-  }
-  SW3 = !digitalRead(D3);
-  SW4 = !digitalRead(D4); 
+  //if (dispOrientation==D_NORMAL) {
+  BTNUP = !digitalRead(SW1_PIN);
+  BTNBK = !digitalRead(SW2_PIN); 
+  BTNEN = !digitalRead(SW3_PIN);
+  BTNDN = !digitalRead(SW4_PIN);
 }
 
 void readBackSwitch()
 { //not sure why but when in a call, SW1 analog read hangs the connection [obsolete: delay(3) workaround resolves]
   //only concerned about 'back' button push anyways, hence this function
-  SW1 = LOW; //must read a0 as an analog, < 100 = pushed
-  SW2 = LOW; 
-  SW3 = LOW;
-  SW4 = !digitalRead(D4); 
+  BTNDN = LOW; //must read a0 as an analog, < 100 = pushed
+  BTNBK = LOW;
+  BTNEN = LOW;
+  //SW4 = !digitalRead(D4);
+  BTNUP = LOW;
 }
 
 void waitSwitches()
 {
   //wait for all switches to be released
   for (int i=0;i<10;i++) {
-    while(SW1||SW2||SW3||SW4) {
+    while(BTNDN||BTNBK||BTNEN||BTNUP) {
       delay(10);
       readSwitches();
     }
@@ -1128,7 +1223,7 @@ void waitBackSwitch()
 {
   //wait for all switches to be released
   for (int i=0;i<10;i++) {
-    while(SW1||SW2||SW3||SW4) {
+    while(BTNDN||BTNBK||BTNEN||BTNUP) {
       delay(10);
       readBackSwitch();
     }
@@ -1143,7 +1238,7 @@ void answerCall() {
   cmdMode = false;
   callConnected = true;
   setCarrier(callConnected);
-  Serial.flush();
+  SerialFlush();
 }
 
 void handleIncomingConnection() {
@@ -1240,7 +1335,7 @@ void dialOut(String upCmd) {
   }
   host.trim(); // remove leading or trailing spaces
   port.trim();
-  Serial.print("DIALING "); Serial.print(host); Serial.print(":"); Serial.println(port);
+  SerialPrint("DIALING "); SerialPrint(host); SerialPrint(":"); SerialPrintLn(port);
   char *hostChr = new char[host.length() + 1];
   host.toCharArray(hostChr, host.length() + 1);
   int portInt = port.toInt();
@@ -1251,7 +1346,7 @@ void dialOut(String upCmd) {
     sendResult(R_CONNECT);
     connectTime = millis();
     cmdMode = false;
-    Serial.flush();
+    SerialFlush();
     callConnected = true;
     setCarrier(callConnected);
     //if (tcpServerPort > 0) tcpServer.stop();
@@ -1272,12 +1367,12 @@ void command()
 {
   cmd.trim();
   if (cmd == "") return;
-  Serial.println();
+  SerialPrintLn();
   String upCmd = cmd;
   upCmd.toUpperCase();
 
   /**** Just AT ****/
-  if (upCmd == "AT") sendResult(R_OK);
+  if (upCmd == "AT") sendResult(R_OK_STAT);
 
   /**** Dial to host ****/
   else if ((upCmd.indexOf("ATDT") == 0) || (upCmd.indexOf("ATDP") == 0) || (upCmd.indexOf("ATDI") == 0) || (upCmd.indexOf("ATDS") == 0))
@@ -1289,17 +1384,17 @@ void command()
   else if (upCmd == "ATNET0")
   {
     telnet = false;
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
   else if (upCmd == "ATNET1")
   {
     telnet = true;
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   else if (upCmd == "ATNET?") {
-    Serial.println(String(telnet));
-    sendResult(R_OK);
+    SerialPrintLn(String(telnet));
+    sendResult(R_OK_STAT);
   }
 
   /**** Answer to incoming connection ****/
@@ -1310,40 +1405,40 @@ void command()
   /**** Display Help ****/
   else if (upCmd == "AT?" || upCmd == "ATHELP") {
     displayHelp();
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Reset, reload settings from EEPROM ****/
   else if (upCmd == "ATZ") {
     readSettings();
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Disconnect WiFi ****/
   else if (upCmd == "ATC0") {
     disconnectWiFi();
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Connect WiFi ****/
   else if (upCmd == "ATC1") {
     connectWiFi();
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Control local echo in command mode ****/
   else if (upCmd.indexOf("ATE") == 0) {
     if (upCmd.substring(3, 4) == "?") {
       sendString(String(echo));
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else if (upCmd.substring(3, 4) == "0") {
       echo = 0;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else if (upCmd.substring(3, 4) == "1") {
       echo = 1;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else {
       sendResult(R_ERROR);
@@ -1354,15 +1449,15 @@ void command()
   else if (upCmd.indexOf("ATV") == 0) {
     if (upCmd.substring(3, 4) == "?") {
       sendString(String(verboseResults));
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else if (upCmd.substring(3, 4) == "0") {
       verboseResults = 0;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else if (upCmd.substring(3, 4) == "1") {
       verboseResults = 1;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else {
       sendResult(R_ERROR);
@@ -1373,16 +1468,16 @@ void command()
   else if (upCmd.indexOf("AT&P") == 0) {
     if (upCmd.substring(4, 5) == "?") {
       sendString(String(pinPolarity));
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else if (upCmd.substring(4, 5) == "0") {
       pinPolarity = P_INVERTED;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
       setCarrier(callConnected);
     }
     else if (upCmd.substring(4, 5) == "1") {
       pinPolarity = P_NORMAL;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
       setCarrier(callConnected);
     }
     else {
@@ -1394,19 +1489,19 @@ void command()
   else if (upCmd.indexOf("AT&K") == 0) {
     if (upCmd.substring(4, 5) == "?") {
       sendString(String(flowControl));
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else if (upCmd.substring(4, 5) == "0") {
       flowControl = 0;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else if (upCmd.substring(4, 5) == "1") {
       flowControl = 1;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else if (upCmd.substring(4, 5) == "2") {
       flowControl = 2;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
     }
     else {
       sendResult(R_ERROR);
@@ -1426,19 +1521,19 @@ void command()
   /**** Set busy message ****/
   else if (upCmd.indexOf("AT$BM=") == 0) {
     busyMsg = cmd.substring(6);
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Display busy message ****/
   else if (upCmd.indexOf("AT$BM?") == 0) {
     sendString(busyMsg);
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Display Network settings ****/
   else if (upCmd == "ATI") {
     displayNetworkStatus();
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Display profile settings ****/
@@ -1446,13 +1541,13 @@ void command()
     displayCurrentSettings();
     waitForSpace();
     displayStoredSettings();
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Save (write) current settings to EEPROM ****/
   else if (upCmd == "AT&W") {
     writeSettings();
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Set or display a speed dial number ****/
@@ -1462,11 +1557,11 @@ void command()
       if (upCmd.substring(5, 6) == "=") {
         String speedDial = cmd;
         storeSpeedDial(speedNum, speedDial.substring(6));
-        sendResult(R_OK);
+        sendResult(R_OK_STAT);
       }
       if (upCmd.substring(5, 6) == "?") {
         sendString(speedDials[speedNum]);
-        sendResult(R_OK);
+        sendResult(R_OK_STAT);
       }
     } else {
       sendResult(R_ERROR);
@@ -1476,80 +1571,80 @@ void command()
   /**** Set WiFi SSID ****/
   else if (upCmd.indexOf("AT$SSID=") == 0) {
     ssid = cmd.substring(8);
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Display WiFi SSID ****/
   else if (upCmd == "AT$SSID?") {
     sendString(ssid);
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Set WiFi Password ****/
   else if (upCmd.indexOf("AT$PASS=") == 0) {
     password = cmd.substring(8);
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Display WiFi Password ****/
   else if (upCmd == "AT$PASS?") {
     sendString(password);
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Reset EEPROM and current settings to factory defaults ****/
   else if (upCmd == "AT&F") {
     defaultEEPROM();
     readSettings();
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Set auto answer off ****/
   else if (upCmd == "ATS0=0") {
     autoAnswer = false;
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Set auto answer on ****/
   else if (upCmd == "ATS0=1") {
     autoAnswer = true;
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Display auto answer setting ****/
   else if (upCmd == "ATS0?") {
     sendString(String(autoAnswer));
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Set PET MCTerm Translate On ****/
   else if (upCmd == "ATPET=1") {
     petTranslate = true;
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Set PET MCTerm Translate Off ****/
   else if (upCmd == "ATPET=0") {
     petTranslate = false;
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Display PET MCTerm Translate Setting ****/
   else if (upCmd == "ATPET?") {
     sendString(String(petTranslate));
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Set HEX Translate On ****/
   else if (upCmd == "ATHEX=1") {
     bHex = true;
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Set HEX Translate Off ****/
   else if (upCmd == "ATHEX=0") {
     bHex = false;
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Hang up a call ****/
@@ -1559,10 +1654,10 @@ void command()
 
   /**** Hang up a call ****/
   else if (upCmd.indexOf("AT$RB") == 0) {
-    sendResult(R_OK);
-    Serial.flush();
+    sendResult(R_OK_STAT);
+    SerialFlush();
     delay(500);
-    ESP.reset();
+    ESP.restart(); //ESP.reset();
   }
 
   /**** Exit modem command mode, go online ****/
@@ -1589,20 +1684,20 @@ void command()
   else if (upCmd.indexOf("AT$SP=") == 0) {
     tcpServerPort = upCmd.substring(6).toInt();
     sendString("CHANGES REQUIRES NV SAVE (AT&W) AND RESTART");
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** Display incoming TCP server port ****/
   else if (upCmd == "AT$SP?") {
     sendString(String(tcpServerPort));
-    sendResult(R_OK);
+    sendResult(R_OK_STAT);
   }
 
   /**** See my IP address ****/
   else if (upCmd == "ATIP?")
   {
-    Serial.println(WiFi.localIP());
-    sendResult(R_OK);
+    SerialPrintLn(WiFi.localIP());
+    sendResult(R_OK_STAT);
   }
 
   /**** HTTP GET request ****/
@@ -1681,7 +1776,7 @@ void handleFlowControl() {
     else txPaused = false;
   }
   if (flowControl == F_SOFTWARE) {
-    
+   
   }
 }
 
@@ -1716,7 +1811,7 @@ void loop()
 
 void enterModemMode()
 {
-    Serial.println("\r\nEntering MODEM Mode...");
+    SerialPrintLn("\r\nEntering MODEM Mode...");
     menuMode = MODE_MODEM;
     ///if (tcpServerPort > 0) tcpServer.begin(tcpServerPort);
     bytesSent=0;
@@ -1725,95 +1820,95 @@ void enterModemMode()
     recvChanged=false;
     speedDialShown=false;
     callConnected=false;
-    
+   
     modem_timer.every(250, refreshDisplay);
-  
+ 
     WiFi.mode(WIFI_STA);
     connectWiFi();
-    sendResult(R_OK);
-    //tcpServer(tcpServerPort); // can't start tcpServer inside a function-- must live outside
-  
+    sendResult(R_OK_STAT);
+ 
     digitalWrite(LED_PIN, LOW); // on
-  
+ 
     webServer.on("/", handleRoot);
     webServer.on("/ath", handleWebHangUp);
     webServer.begin();
-    mdns.begin("WiRSa", WiFi.localIP());
+   
+    mdns.begin("WiRSa"); // Set the network hostname to "wirsa.local"
 }
 
 void mainLoop()
 {
     int menuSel=-1;
     readSwitches();
-    if (SW1) {  //UP
+    if (BTNUP) {  //UP
         menuIdx--;
         if (menuIdx<0)
           menuIdx=menuCnt-1;
         mainMenu(true);
     }
-    else if (SW2) { //DOWN
+    else if (BTNDN) { //DOWN
       menuIdx++;
       if (menuIdx>(menuCnt-1))
         menuIdx=0;
       mainMenu(true);
     }
-    else if (SW3) { //ENTER
+    else if (BTNEN) { //ENTER
       menuSel = menuIdx;
     }
-    else if (SW4) { //BACK
+    else if (BTNBK) { //BACK
     }
     waitSwitches();
 
-    int serAvl = Serial.available();
+    int serAvl = SerialAvailable();
     char chr;
     if (serAvl>0)
-      chr = Serial.read();      
+      chr = SerialRead();
 
     if (serAvl>0 || menuSel>-1)
     {
       if (chr=='M'||chr=='m'||menuSel==0) //enter modem mode
       {
-        Serial.print(chr); //echo it back if it was a valid entry
+        SerialPrint(chr); //echo it back if it was a valid entry
         enterModemMode();
       }
       else if (chr=='F'||chr=='f'||menuSel==1)
       {
-        Serial.print(chr); //echo it back if it was a valid entry
-        Serial.println("");
-        Serial.println("Initializing SD card...");
-        if (!SD.begin(chipSelect)) {
-          Serial.println("Initialization failed! Please check that SD card is inserted and formatted as FAT16 or FAT32.");
+        SerialPrint(chr); //echo it back if it was a valid entry
+        SerialPrintLn("");
+        SerialPrintLn("Initializing SD card...");
+        if (!SD.begin(SD_CS)) {
+          SerialPrintLn("Initialization failed! Please check that SD card is inserted and formatted as FAT16 or FAT32.");
           showMessage("\nPLEASE INSERT\n   SD CARD");
           return;
         }
-        Serial.println("Initialization Complete.");
+        SerialPrintLn("Initialization Complete.");
         fileMenu(false);
       }
       else if (chr=='P'||chr=='p'||menuSel==2)
       {
-        Serial.print(chr); //echo it back if it was a valid entry
-        Serial.println("");
-        Serial.println("Initializing SD card...");
-        if (!SD.begin(chipSelect)) {
-          Serial.println("Initialization failed! Please check that SD card is inserted and formatted as FAT16 or FAT32.");
+        SerialPrint(chr); //echo it back if it was a valid entry
+        SerialPrintLn("");
+        SerialPrintLn("Initializing SD card...");
+        if (!SD.begin(SD_CS)) {
+          SerialPrintLn("Initialization failed! Please check that SD card is inserted and formatted as FAT16 or FAT32.");
           showMessage("\nPLEASE INSERT\n   SD CARD");
           return;
         }
-        Serial.println("Initialization Complete.");        
+        SerialPrintLn("Initialization Complete.");        
         playbackMenu(false);
       }
       else if (chr=='S'||chr=='s'||menuSel==3)
       {
-        Serial.print(chr); //echo it back if it was a valid entry
+        SerialPrint(chr); //echo it back if it was a valid entry
         settingsMenu(false);
       }
       else if (chr=='\r'||chr=='\n'||chr=='?')
       {
-        Serial.print(chr); //echo it back if it was a valid entry
+        SerialPrint(chr); //echo it back if it was a valid entry
         mainMenu(false);
       }
       else if (serAvl>0)
-      { //redisplay the menu 
+      { //redisplay the menu
         //mainMenu(false);
       }
     }
@@ -1823,52 +1918,52 @@ void baudLoop()
 {
   int menuSel=-1;
   readSwitches();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       baudMenu(true);
   }
-  else if (SW2) { //DOWN
+  else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     baudMenu(true);
   }
-  else if (SW3) { //ENTER
+  else if (BTNEN) { //ENTER
     menuSel = menuIdx;
   }
-  else if (SW4) { //BACK
+  else if (BTNBK) { //BACK
     settingsMenu(false);
   }
   waitSwitches();
 
-  int serAvl = Serial.available();
+  int serAvl = SerialAvailable();
   char chr;
   if (serAvl>0) {
-    chr = Serial.read();
-    Serial.print(chr);
+    chr = SerialRead();
+    SerialPrint(chr);
   }
-  
+ 
   if (menuSel>-1)
   {
     serialSpeed = menuIdx;
     writeSettings();
-    Serial.end();
+    PhysicalSerial.end();
     delay(200);
-    Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
+    PhysicalSerial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
     settingsMenu(false);
   } else if (serAvl>0) {
     //between A-I                                or a-i
-    if (chr>=65 && chr <= 65+sizeof(bauds) || chr>=97 && chr <= 97+sizeof(bauds)) 
+    if (chr>=65 && chr <= 65+sizeof(bauds) || chr>=97 && chr <= 97+sizeof(bauds))
     {
       if (chr>=97)
         chr -= 32; //convert to uppercase
       serialSpeed = chr-65;
       writeSettings();
-      Serial.end();
+      PhysicalSerial.end();
       delay(200);
-      Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
+      PhysicalSerial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
       settingsMenu(false);
     } else
       baudMenu(false);
@@ -1879,52 +1974,52 @@ void serialLoop()
 {
   int menuSel=-1;
   readSwitches();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       serialMenu(true);
   }
-  else if (SW2) { //DOWN
+  else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     serialMenu(true);
   }
-  else if (SW3) { //ENTER
+  else if (BTNEN) { //ENTER
     menuSel = menuIdx;
   }
-  else if (SW4) { //BACK
+  else if (BTNBK) { //BACK
     settingsMenu(false);
   }
   waitSwitches();
 
-  int serAvl = Serial.available();
+  int serAvl = SerialAvailable();
   char chr;
   if (serAvl>0) {
-    chr = Serial.read();
-    Serial.print(chr);
+    chr = SerialRead();
+    SerialPrint(chr);
   }
-  
+ 
   if (menuSel>-1)
   {
     serialConfig = menuIdx;
     writeSettings();
-    Serial.end();
+    PhysicalSerial.end();
     delay(200);
-    Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
+    PhysicalSerial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
     settingsMenu(false);
   } else if (serAvl>0) {
     //between A-X                                or a-x
-    if (chr>=65 && chr <= 65+sizeof(bits) || chr>=97 && chr <= 97+sizeof(bits)) 
+    if (chr>=65 && chr <= 65+sizeof(bits) || chr>=97 && chr <= 97+sizeof(bits))
     {
       if (chr>=97)
         chr -= 32; //convert to uppercase
       serialConfig = chr-65;
       writeSettings();
-      Serial.end();
+      PhysicalSerial.end();
       delay(200);
-      Serial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
+      PhysicalSerial.begin(bauds[serialSpeed], (SerialConfig)bits[serialConfig]);
       settingsMenu(false);
     } else
       serialMenu(false);
@@ -1935,31 +2030,31 @@ void orientationLoop()
 {
   int menuSel=-1;
   readSwitches();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       orientationMenu(true);
   }
-  else if (SW2) { //DOWN
+  else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     orientationMenu(true);
   }
-  else if (SW3) { //ENTER
+  else if (BTNEN) { //ENTER
     menuSel = menuIdx;
   }
-  else if (SW4) { //BACK
+  else if (BTNBK) { //BACK
     settingsMenu(false);
   }
   waitSwitches();
-  
-  int serAvl = Serial.available();
+ 
+  int serAvl = SerialAvailable();
   char chr;
   if (serAvl>0) {
-    chr = Serial.read();
-    Serial.print(chr);
+    chr = SerialRead();
+    SerialPrint(chr);
   }
 
   if (serAvl>0 || menuSel>-1)
@@ -1968,7 +2063,7 @@ void orientationLoop()
       menuSel=0;
     else if (chr=='F'||chr=='f')
       menuSel=1;
-      
+     
     if (menuSel>-1)
     {
       dispOrientation = menuSel;
@@ -1990,31 +2085,31 @@ void defaultModeLoop()
 {
   int menuSel=-1;
   readSwitches();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       defaultModeMenu(true);
   }
-  else if (SW2) { //DOWN
+  else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     defaultModeMenu(true);
   }
-  else if (SW3) { //ENTER
+  else if (BTNEN) { //ENTER
     menuSel = menuIdx;
   }
-  else if (SW4) { //BACK
+  else if (BTNBK) { //BACK
     settingsMenu(false);
   }
   waitSwitches();
-  
-  int serAvl = Serial.available();
+ 
+  int serAvl = SerialAvailable();
   char chr;
   if (serAvl>0) {
-    chr = Serial.read();
-    Serial.print(chr);
+    chr = SerialRead();
+    SerialPrint(chr);
   }
 
   if (serAvl>0 || menuSel>-1)
@@ -2023,7 +2118,7 @@ void defaultModeLoop()
       menuSel=0;
     else if (chr=='B'||chr=='b')
       menuSel=1;
-      
+     
     if (menuSel>-1)
     {
       defaultMode = menuSel;
@@ -2039,28 +2134,28 @@ void settingsLoop()
 {
   int menuSel=-1;
   readSwitches();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       settingsMenu(true);
-  } else if (SW2) { //DOWN
+  } else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     settingsMenu(true);
-  } else if (SW3) { //ENTER
+  } else if (BTNEN) { //ENTER
     menuSel = menuIdx;
-  } else if (SW4) { //BACK
+  } else if (BTNBK) { //BACK
     mainMenu(false);
   }
   waitSwitches();
-    
-  int serAvl = Serial.available();
+   
+  int serAvl = SerialAvailable();
   char chr;
   if (serAvl>0) {
-    chr = Serial.read();
-    Serial.print(chr);
+    chr = SerialRead();
+    SerialPrint(chr);
   }
 
   if (serAvl>0 || menuSel>-1)
@@ -2087,20 +2182,20 @@ void settingsLoop()
     }
     else if (chr=='F'||chr=='f'||menuSel==5)
     {
-       Serial.println("** PLEASE WAIT: FACTORY RESET **");
+       SerialPrintLn("** PLEASE WAIT: FACTORY RESET **");
        showMessage("***************\n* PLEASE WAIT *\n*FACTORY RESET*\n***************");
        defaultEEPROM();
        resetFunc();
     }
     else if (chr=='R'||chr=='r'||menuSel==6)
     {
-      Serial.println("** PLEASE WAIT: REBOOTING **");
+      SerialPrintLn("** PLEASE WAIT: REBOOTING **");
       showMessage("***************\n* PLEASE WAIT *\n*  REBOOTING  *\n***************");
       resetFunc();
     }    
     else if (chr=='A'||chr=='a'||menuSel==7)
     {
-      Serial.println("\n** WiRSa BUILD:   " + build + " **");
+      SerialPrintLn("\n** WiRSa BUILD:   " + build + " **");
       showMessage("***************\n* WiRSa BUILD *\n*    " + build + "    *\n***************");
     }
     else if (serAvl>0)
@@ -2122,7 +2217,7 @@ void settingsMenu(bool arrow) {
 
 void orientationMenu(bool arrow) {
   menuMode = MODE_ORIENTATION;
-  showMenu("SCREEN", orientationMenuDisp, 2, (arrow?MENU_DISP:MENU_BOTH), dispOrientation);
+  showMenu("DISPLAY", orientationMenuDisp, 2, (arrow?MENU_DISP:MENU_BOTH), dispOrientation);
 }
 
 void defaultModeMenu(bool arrow) {
@@ -2137,7 +2232,7 @@ void protocolMenu(bool arrow) {
 
 void baudMenu(bool arrow) {
   menuMode = MODE_SETBAUD;
-  showMenu("SET BAUD", baudDisp, 9, (arrow?MENU_DISP:MENU_NUM), serialSpeed);
+  showMenu("BAUD RATE", baudDisp, 9, (arrow?MENU_DISP:MENU_NUM), serialSpeed);
 }
 
 void serialMenu(bool arrow) {
@@ -2154,31 +2249,31 @@ void fileLoop()
 {
   int menuSel=-1;
   readSwitches();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       fileMenu(true);
   }
-  else if (SW2) { //DOWN
+  else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     fileMenu(true);
   }
-  else if (SW3) { //ENTER
+  else if (BTNEN) { //ENTER
     menuSel = menuIdx;
   }
-  else if (SW4) { //BACK
+  else if (BTNBK) { //BACK
     mainMenu(false);
   }
   waitSwitches();
 
-  int serAvl = Serial.available();
+  int serAvl = SerialAvailable();
   char chr;
   if (serAvl>0) {
-    chr = Serial.read();
-    Serial.print(chr);
+    chr = SerialRead();
+    SerialPrint(chr);
   }
 
   if (serAvl>0 || menuSel>-1)
@@ -2207,15 +2302,15 @@ void fileLoop()
     }
     else if (chr=='G'||chr=='g') //print out the logfile
     {
-      Serial.println("\r\n\r\nTransfer Log:");
+      SerialPrintLn("\r\n\r\nTransfer Log:");
       logFile = SD.open("logfile.txt");
       if (logFile) {
         while (logFile.available()) {
-          Serial.write(logFile.read());
+          SerialWrite(logFile.read());
         }
         logFile.close();
       } else
-        Serial.println("Unable to open log file");
+        SerialPrintLn("Unable to open log file");
     }
     /*else if (chr=='S'||chr=='s') //send pipe mode
     {
@@ -2224,7 +2319,7 @@ void fileLoop()
     else if (chr=='R'||chr=='r') //receive pipe mode
     {
       receivePipeMode();
-    }*/   
+    }*/  
     else {
       fileMenu(false);
     }
@@ -2235,31 +2330,31 @@ void protocolLoop()
 {
   int menuSel=-1;
   readSwitches();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       protocolMenu(true);
   }
-  else if (SW2) { //DOWN
+  else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     protocolMenu(true);
   }
-  else if (SW3) { //ENTER
+  else if (BTNEN) { //ENTER
     menuSel = menuIdx;
   }
-  else if (SW4) { //BACK
+  else if (BTNBK) { //BACK
     fileMenu(false);
   }
   waitSwitches();
 
-  int serAvl = Serial.available();
+  int serAvl = SerialAvailable();
   char chr;
   if (serAvl>0) {
-    chr = Serial.read();
-    Serial.print(chr);
+    chr = SerialRead();
+    SerialPrint(chr);
   }
 
   if (serAvl>0 || menuSel>-1)
@@ -2292,7 +2387,7 @@ void protocolLoop()
     else if (chr=='Z'||chr=='z'||menuSel==4) //ZMODEM
     {
       showMessage("NOT YET\nIMPLEMENTED");
-      Serial.println("NOT YET IMPLEMENTED");
+      SerialPrintLn("NOT YET IMPLEMENTED");
       /*if (xferMode == XFER_SEND)
         sendFileZMODEM();
       else if (xferMode == XFER_RECV)
@@ -2301,7 +2396,7 @@ void protocolLoop()
     else if (chr=='K'||chr=='k'||menuSel==5) //KERMIT
     {
       showMessage("NOT YET\nIMPLEMENTED");
-      Serial.println("NOT YET IMPLEMENTED");
+      SerialPrintLn("NOT YET IMPLEMENTED");
       /*if (xferMode == XFER_SEND)
         sendFileKERMIT();
       else if (xferMode == XFER_RECV)
@@ -2315,7 +2410,7 @@ void protocolLoop()
 
 bool checkCancel() {
   readBackSwitch();
-  bool cncl = SW4;
+  bool cncl = BTNBK;
   waitBackSwitch();
   return cncl;
 }
@@ -2324,35 +2419,35 @@ void listFilesLoop()
 {
   int menuSel=-1;
   readSwitches();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       listFilesMenu(true);
   }
-  else if (SW2) { //DOWN
+  else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     listFilesMenu(true);
   }
-  else if (SW3) { //ENTER
+  else if (BTNEN) { //ENTER
     menuSel = menuIdx;
   }
-  else if (SW4) { //BACK
+  else if (BTNBK) { //BACK
     fileMenu(false);
   }
   waitSwitches();
-  
-  if (Serial.available() || menuSel>=-1)
+ 
+  if (SerialAvailable() || menuSel>=-1)
   {
-    char chr = Serial.read();
-    Serial.print(chr);
+    char chr = SerialRead();
+    SerialPrint(chr);
 
     if (menuSel>-1){
       fileName = files[menuSel];
       fileMenu(false);
-      Serial.println("Chosen file: " + fileName);
+      SerialPrintLn("Chosen file: " + fileName);
     } else {
       //listFilesMenu();
     }
@@ -2374,12 +2469,12 @@ void resetGlobals()
   xferBytes = 0;
 }
 
-void serialWrite(char c, String log)
+void SerialWriteLog(char c, String log)
 {
   if (log!="")
     addLog("> [" + log + "] 0x" + String(c, HEX) + " " + String(c) + "\r\n");
   updateXferMessage();
-  Serial.write(c); 
+  SerialWrite(c);
 }
 
 void addLog(String logmsg)
@@ -2392,11 +2487,11 @@ void addLog(String logmsg)
 
 String prompt(String msg, String dflt="")
 {
-  Serial.println("");
-  Serial.println("");
-  Serial.print(msg);
+  SerialPrintLn("");
+  SerialPrintLn("");
+  SerialPrint(msg);
   if (dflt!="")
-    Serial.print("[" + dflt + "] ");
+    SerialPrint("[" + dflt + "] ");
   showMessage("{SERIAL}\n"+msg);
   String resp = getLine();
   if (resp=="")
@@ -2410,20 +2505,20 @@ void sendFileXMODEM()
   resetGlobals();
   packetNumber = 1;
   fileName=prompt("Please enter the filename to send: ");
-  Serial.println("Sending " + fileName);
-  Serial.println("WAITING FOR TRANSFER START...");
+  SerialPrintLn("Sending " + fileName);
+  SerialPrintLn("WAITING FOR TRANSFER START...");
   SD.remove("logfile.txt");
   //if (!logFile)
-    //Serial.println("Couldn't open log file");
+    //SerialPrintLn("Couldn't open log file");
   File dataFile = SD.open(fileName);
   if (dataFile) { //make sure the file is valid
     xferMsg = "SENDING XMODEM\nBytes Sent:\n";
     String fileSize = getFileSize(fileName);
     sendLoopXMODEM(dataFile, fileName, fileSize);
-    Serial.println("Download Complete");
+    SerialPrintLn("Download Complete");
     dataFile.close();
   } else {
-    Serial.println("Invalid File");
+    SerialPrintLn("Invalid File");
   }
 }
 
@@ -2431,20 +2526,20 @@ void sendFileYMODEM()
 {
   resetGlobals();
   fileName=prompt("Please enter the filename to send: ");
-  Serial.println("Sending " + fileName);
-  Serial.println("WAITING FOR TRANSFER START...");
+  SerialPrintLn("Sending " + fileName);
+  SerialPrintLn("WAITING FOR TRANSFER START...");
   SD.remove("logfile.txt");
   //if (!logFile)
-    //Serial.println("Couldn't open log file");
+    //SerialPrintLn("Couldn't open log file");
   File dataFile = SD.open(fileName);
   if (dataFile) { //make sure the file is valid
     xferMsg = "SENDING YMODEM\nBytes Sent:\n";
     String fileSize = getFileSize(fileName);
     sendLoopYMODEM(dataFile, fileName, fileSize);
-    Serial.println("Download Complete");
+    SerialPrintLn("Download Complete");
     dataFile.close();
   } else {
-    Serial.println("Invalid File");
+    SerialPrintLn("Invalid File");
   }
 }
 
@@ -2458,7 +2553,7 @@ void sendFileRaw()
     xferMsg = "SENDING RAW\nBytes Sent:\n";
     String fileSize = getFileSize(fileName);
     waitTime = prompt("Start time in seconds: ", "30");  
-    Serial.println("\r\nStarting transfer in " + waitTime + " seconds...");
+    SerialPrintLn("\r\nStarting transfer in " + waitTime + " seconds...");
     digitalWrite(LED_PIN, LOW);
     delay(waitTime.toInt()*1000);
     digitalWrite(LED_PIN, HIGH);
@@ -2467,10 +2562,10 @@ void sendFileRaw()
     {
       if (dataFile.available())
       {
-        Serial.write(dataFile.read());
+        SerialWrite(dataFile.read());
         if (c==512)
         { //flush the buffer every so often to avoid a WDT reset
-          Serial.flush();
+          SerialFlush();
           led_on();
           yield();
           c=0;
@@ -2479,14 +2574,14 @@ void sendFileRaw()
           c++;
       }
     }
-    Serial.flush();
-    Serial.write((char)26); //DOS EOF
-    Serial.flush();
+    SerialFlush();
+    SerialWrite((char)26); //DOS EOF
+    SerialFlush();
     yield();
     digitalWrite(LED_PIN, LOW);
     dataFile.close();
   } else {
-    Serial.println("\r\nInvalid File");
+    SerialPrintLn("\r\nInvalid File");
   }
 }
 
@@ -2498,8 +2593,8 @@ void receiveFileRaw()
     xferMsg = "RECEIVE RAW\nBytes Recevied:\n";
     while (true)
     {
-      if (Serial.available() > 0) {
-        char c = Serial.read();
+      if (SerialAvailable() > 0) {
+        char c = SerialRead();
         if (c==27)
           break;
         else
@@ -2512,13 +2607,13 @@ void receiveFileRaw()
     xferFile.flush();
     xferFile.close();
   } else
-    Serial.println("Transfer Cancelled");
+    SerialPrintLn("Transfer Cancelled");
 }
 
 void sendLoopXMODEM(File dataFile, String fileName, String fileSize)
 {
   bool forceStart=false;
-  
+ 
   while(true)
   {
     //readSwitches();
@@ -2526,18 +2621,18 @@ void sendLoopXMODEM(File dataFile, String fileName, String fileSize)
     //  waitSwitches();
     //  forceStart=true;
     //}
-    if (Serial.available() > 0 || forceStart) {
-      char c = Serial.read();
+    if (SerialAvailable() > 0 || forceStart) {
+      char c = SerialRead();
       if (forceStart)
         c=0x15; //NAK will start the transfer
-        
+       
       addLog("< " + String(c, HEX) + "\r\n");
       switch (c)
       {
         case 0x06: //ACK
           if (lastPacket)
           {
-            serialWrite(0x04, "EOT after last packet " + String(eotSent)); //EOT
+            SerialWriteLog(0x04, "EOT after last packet " + String(eotSent)); //EOT
             eotSent++;
             if (eotSent==2)
               return;
@@ -2553,11 +2648,11 @@ void sendLoopXMODEM(File dataFile, String fileName, String fileSize)
         case 0x15: //NAK
           blockSize = 128;
         case 0x43: //'C'
-          //Serial.println("NAK");
+          //SerialPrintLn("NAK");
           if (lastPacket)
           {
-              serialWrite(0x04, "EOT after last packet " + String(eotSent)); //EOT
-              //Serial.println("EOT");
+              SerialWriteLog(0x04, "EOT after last packet " + String(eotSent)); //EOT
+              //SerialPrintLn("EOT");
               eotSent++;
               if (eotSent==2)
                 return;
@@ -2577,17 +2672,17 @@ void sendLoopYMODEM(File dataFile, String fileName, String fileSize)
 {
   while(true)
   {
-    if (Serial.available() > 0) {
-      char c = Serial.read();
+    if (SerialAvailable() > 0) {
+      char c = SerialRead();
       addLog("< " + String(c, HEX) + "\r\n");
       switch (c)
       {
         case 0x06: //ACK
-          //Serial.println("ACK");
+          //SerialPrintLn("ACK");
           if (lastPacket && eotSent<2)
           {
-            serialWrite(0x04, "EOT after last packet " + String(eotSent)); //EOT
-            //Serial.println("EOT");
+            SerialWriteLog(0x04, "EOT after last packet " + String(eotSent)); //EOT
+            //SerialPrintLn("EOT");
             eotSent++;
           }
           else if (lastPacket && (eotSent==2) && finalFileSent)
@@ -2609,12 +2704,12 @@ void sendLoopYMODEM(File dataFile, String fileName, String fileSize)
           break;
         case 0x15: //NAK
         case 0x43: //'C'
-          //Serial.println("NAK");
+          //SerialPrintLn("NAK");
           finalFileSent = false;
           if (lastPacket && eotSent<2)
           {
-              serialWrite(0x04, "EOT after last packet " + String(eotSent)); //EOT
-              //Serial.println("EOT");
+              SerialWriteLog(0x04, "EOT after last packet " + String(eotSent)); //EOT
+              //SerialPrintLn("EOT");
               eotSent++;
           }
           else if (lastPacket && (eotSent == 2))
@@ -2778,7 +2873,7 @@ void sendPacket(File dataFile)
     }
     if (lastPacket)
       addLog("Last Packet Set");
-      
+     
     crc.reset();
     crc.setPolynome(0x1021);
     for (int i = 0; i < packetData.size(); i++)
@@ -2805,7 +2900,7 @@ void sendPacket(File dataFile)
     {
       p[i]=packet.get(i);
     }
-  
+ 
     sendTelnet(p, sizeof(p));
   }
 }
@@ -2827,20 +2922,20 @@ void sendTelnet(byte packet[], int sz)
   for (int i=0; i<sz; i++)
   {
     //logmsg = "P#" + String(packetNumber) + " b#" + String(i);
-    
+   
     if (packet[i] == 0xFF && EscapeTelnet)
-      serialWrite(0xFF, "escaping FF");
-      
-    serialWrite(packet[i], logmsg);
+      SerialWriteLog(0xFF, "escaping FF");
+     
+    SerialWriteLog(packet[i], logmsg);
   }
-  Serial.flush();
+  SerialFlush();
 }
 
 void receiveFileXMODEM()
 {
   SD.remove("logfile.txt");
-  Serial.println("");
-  Serial.println("");
+  SerialPrintLn("");
+  SerialPrintLn("");
   fileName=prompt("Please enter the filename to receive: ");
 
   SD.remove(fileName);
@@ -2848,37 +2943,37 @@ void receiveFileXMODEM()
   if (xferFile) {
     xferMsg = "RECEIVE XMODEM\nBytes Recevied:\n";
     waitTime = prompt("Start time in seconds: ", "30");  
-    Serial.println("\r\nStarting transfer in " + waitTime + " seconds...");
+    SerialPrintLn("\r\nStarting transfer in " + waitTime + " seconds...");
     receiveLoopXMODEM();
-    
+   
     xferFile.flush();
     xferFile.close();
     clearInputBuffer();
-    Serial.println("Download Complete");
+    SerialPrintLn("Download Complete");
   } else
-    Serial.println("Transfer Cancelled");
+    SerialPrintLn("Transfer Cancelled");
 }
 
 void receiveFileYMODEM()
 {
   SD.remove("logfile.txt");
   xferMsg = "RECEIVE YMODEM\nBytes Recevied:\n";
-  Serial.println("");
-  Serial.println("");
+  SerialPrintLn("");
+  SerialPrintLn("");
   waitTime = prompt("Start time in seconds: ", "30");  
-  Serial.println("\r\nStarting transfer in " + waitTime + " seconds...");
+  SerialPrintLn("\r\nStarting transfer in " + waitTime + " seconds...");
   receiveLoopYMODEM();
   xferFile.flush();
   xferFile.close();
   clearInputBuffer();
-  Serial.println("Download Complete");
+  SerialPrintLn("Download Complete");
 }
 
 void clearInputBuffer()
 {
-  while(Serial.available()>0)
+  while(SerialAvailable()>0)
   {
-    char discard = Serial.read();
+    char discard = SerialRead();
   }
 }
 
@@ -2889,7 +2984,7 @@ bool sendStartByte(void *)
     return false;
   else
   {
-    serialWrite(0x43, "Sending Start C from Timer"); //letter C
+    SerialWriteLog(0x43, "Sending Start C from Timer"); //letter C
     readyToReceive = true;
     return true;
   }
@@ -2907,8 +3002,8 @@ void receiveLoopXMODEM()
   {    
     timer.tick();
 
-    if (Serial.available() > 0) {
-      char c = Serial.read();
+    if (SerialAvailable() > 0) {
+      char c = SerialRead();
 
       //addLog("RCV: " + String(c, HEX) + " " + String(c));
 
@@ -2921,7 +3016,7 @@ void receiveLoopXMODEM()
         delay(100); //wait for anything else incoming
         clearInputBuffer();
         //delay(2000); //wait a bit
-        serialWrite(0x43, "Sending C to start transfer"); //'C'
+        SerialWriteLog(0x43, "Sending C to start transfer"); //'C'
         readyToReceive = true;
       }
       else
@@ -2929,7 +3024,7 @@ void receiveLoopXMODEM()
         if (buffer.size() == 0 && c == 0x04) //EOT
         {
           //received EOT on its own - transmission is complete, send ACK and return the file
-          serialWrite(0x06, "ACK after EOT"); //ACK              
+          SerialWriteLog(0x06, "ACK after EOT"); //ACK              
           return;
         }
         else
@@ -2954,7 +3049,7 @@ void receiveLoopXMODEM()
             blockSize = 128;
             packetSize = 133;
           }
-    
+   
           if (processPacket)
           {
             addLog(String(buffer.size()) + " Process now");
@@ -2977,7 +3072,7 @@ void receiveLoopXMODEM()
                   uint16_t c = crc.getCRC();
                   uint8_t hi = (char)(c >> 8); // Shift 8 bytes -> tell get dropped
                   uint8_t lo = (char)(c & 0xFF); // Only last Byte is left
-      
+     
                   //compare it to the received CRC - upper byte first
                   addLog("hi CRC: " + String(hi) + " " + buffer.get(packetSize - 2));
                   if (hi == buffer.get(packetSize - 2))
@@ -3014,7 +3109,7 @@ void receiveLoopXMODEM()
               {
                 addLog("\nGood packet, sending ACK");
                 packetNumber++; //expect the next packet
-                serialWrite(0x06, "ACK after good packet"); //ACK
+                SerialWriteLog(0x06, "ACK after good packet"); //ACK
               }              
             }
           }
@@ -3042,19 +3137,19 @@ void receiveLoopYMODEM()
   {    
     timer.tick();
 
-    if (Serial.available() > 0) {
-      char c = Serial.read();
+    if (SerialAvailable() > 0) {
+      char c = SerialRead();
 
       //addLog("received: " + String(c, HEX) + " " + String(c) + " " + String(buffer.size()));
       //addLog("received: " + String(c, HEX) + " " + String(buffer.size()));
       addLog("received: " + String(c));
-      
+     
       if (c=='X' && XCount>=4)
         return;
       else if (c=='X')
         XCount++;
       else
-        XCount=0;       
+        XCount=0;      
 
       if (!readyToReceive)
       {
@@ -3065,7 +3160,7 @@ void receiveLoopYMODEM()
         delay(100); //wait for anything else incoming
         clearInputBuffer();
         //delay(2000); //wait a bit
-        serialWrite(0x43, "Sending C to start transfer"); //'C'
+        SerialWriteLog(0x43, "Sending C to start transfer"); //'C'
         readyToReceive = true;
       }
       else
@@ -3074,7 +3169,7 @@ void receiveLoopYMODEM()
         if (buffer.size() == 0 && c == 0x04) //EOT
         {
           //received EOT on its own - transmission is complete, send ACK and return the file
-          serialWrite(0x06, "ACK after EOT"); //ACK              
+          SerialWriteLog(0x06, "ACK after EOT"); //ACK              
           return;
         }
         else
@@ -3092,14 +3187,14 @@ void receiveLoopYMODEM()
           else if (buffer.size() == 133 && buffer.get(0) == 0x01)
           {
             //even though we're in 1K mode, I still have to process 128-byte packets
-            
+           
             addLog("buffer.get(0): " + String(buffer.get(0)));
             addLog("buffer.get(1): " + String(buffer.get(1)));
             processPacket = true;
             blockSize = 128;
             packetSize = 133;
           }
-    
+   
           if (processPacket)
           {
             addLog(String(buffer.size()) + " Process now");
@@ -3122,7 +3217,7 @@ void receiveLoopYMODEM()
                   uint16_t c = crc.getCRC();
                   uint8_t hi = (char)(c >> 8); // Shift 8 bytes -> tell get dropped
                   uint8_t lo = (char)(c & 0xFF); // Only last Byte is left
-      
+     
                   //compare it to the received CRC - upper byte first
                   addLog("hi CRC: " + String(hi) + " " + buffer.get(packetSize - 2));
                   if (hi == buffer.get(packetSize - 2))
@@ -3186,10 +3281,10 @@ void receiveLoopYMODEM()
               {
                 addLog("\nGood packet, sending ACK");
                 packetNumber++; //expect the next packet
-                serialWrite(0x06, "ACK after good packet"); //ACK
+                SerialWriteLog(0x06, "ACK after good packet"); //ACK
                 if (zeroPacket)
                 {
-                  serialWrite(0x43, "send C after first ACK"); //'C'  //also send a "C" after the first ACK so actual transfer begins
+                  SerialWriteLog(0x43, "send C after first ACK"); //'C'  //also send a "C" after the first ACK so actual transfer begins
                   zeroPacket = false;
                   //expect the data packets should come as 1K
                   blockSize = 1024;
@@ -3208,31 +3303,31 @@ void playbackLoop()
 {
   int menuSel=-1;
   readSwitches();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       playbackMenu(true);
   }
-  else if (SW2) { //DOWN
+  else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     playbackMenu(true);
   }
-  else if (SW3) { //ENTER
+  else if (BTNEN) { //ENTER
     menuSel = menuIdx;
   }
-  else if (SW4) { //BACK
+  else if (BTNBK) { //BACK
     mainMenu(false);
   }
   waitSwitches();
 
-  if (Serial.available() || menuSel>-1)
+  if (SerialAvailable() || menuSel>-1)
   {
-    char chr = Serial.read();
-    Serial.println(chr);
-    
+    char chr = SerialRead();
+    SerialPrintLn(chr);
+   
     if (chr == 'L' || chr == 'l') {
       listFiles();
     } else if (chr == 'T' || chr == 't') {
@@ -3240,24 +3335,24 @@ void playbackLoop()
     } else if (chr == 'E' || chr == 'e') {
       evalKey();
     } else if (chr == 'D' || chr == 'd') {
-      Serial.print("Enter Filename: ");
+      SerialPrint("Enter Filename: ");
       String fileName = getLine();
       if (fileName!="") {
         if (displayFile(fileName, false, 0))
           waitKey(27,96);
-        Serial.println("");
+        SerialPrintLn("");
         playbackMenu(false);
       }
     } else if (chr == 'P' || chr == 'p') {
-      Serial.print("Enter Filename: ");
+      SerialPrint("Enter Filename: ");
       fileName = getLine();
       if (fileName!="") {
-        Serial.println("");
-        Serial.print("Begin at Position: ");
+        SerialPrintLn("");
+        SerialPrint("Begin at Position: ");
         String pos = getLine();
         if (displayFile(fileName, true, pos.toInt()))
           waitKey(27,96);
-        Serial.println("");
+        SerialPrintLn("");
         playbackMenu(false);
       }
     } else if (chr=='M'||chr=='m'||menuSel==0) {
@@ -3271,12 +3366,12 @@ void playbackLoop()
 
 void listFiles()
 {
-   Serial.println("");
-   Serial.println("listing files on SD card..");
-   Serial.println("");
+   SerialPrintLn("");
+   SerialPrintLn("listing files on SD card..");
+   SerialPrintLn("");
    File root = SD.open("/");
-   Serial.println("FILENAME            SIZE");
-   Serial.println("--------            ----");
+   SerialPrintLn("FILENAME            SIZE");
+   SerialPrintLn("--------            ----");
    while(true) {
      File entry =  root.openNextFile();
      if (! entry) {
@@ -3285,18 +3380,18 @@ void listFiles()
      }
      if (!entry.isDirectory()) {
          String fn = entry.name();
-         Serial.print(fn);
+         SerialPrint(fn);
          for(int i=0; i<20-fn.length(); i++)
          {
-            Serial.print(" ");
+            SerialPrint(" ");
          }
-         Serial.println(entry.size(), DEC);
+         SerialPrintLn(entry.size(), DEC);
      }
      entry.close();
    }
    root.close();
-   Serial.println("");
-   Serial.print("> ");
+   SerialPrintLn("");
+   SerialPrint("> ");
 }
 
 void listFilesMenu(bool arrow) {
@@ -3316,7 +3411,7 @@ void listFilesMenu(bool arrow) {
         files[c]=fn;
         c++;
       }
-      //Serial.println(entry.size(), DEC);
+      //SerialPrintLn(entry.size(), DEC);
     }
     entry.close();
   }
@@ -3335,7 +3430,7 @@ void modemMenu() {
 void modemMenuMsg() {
   menuMode = MODE_MODEM;
   display.clearDisplay();
-  display.setCursor(1, 1); 
+  display.setCursor(1, 1);
   display.setTextColor(SSD1306_WHITE);
   display.println("Modem mode\nUp/Down show menu");
   display.display();
@@ -3349,19 +3444,17 @@ void modemConnected() {
   showCallIcon();
   display.setTextWrap(false);
 
-  display.setCursor(3, 11);
-  display.print("WIFI: "); 
+  display.setCursor(3, 19);
+  display.print("WIFI: ");
   display.print(WiFi.SSID());
 
-  display.setCursor(3, 21);     // Start at top-left corner
-  display.print("ADDR: ");
+  display.setCursor(3, 29);
+  //display.print("IP: ");
   display.print(WiFi.localIP());
 
   if (tcpServerPort > 0) {
-    display.setCursor(3, 31);
-    display.print("PORT: ");
+    display.print(":");
     display.print(tcpServerPort);
-    display.print(" (TELNET)");
   }
 
   display.drawLine(0,40,127,40,SSD1306_WHITE);
@@ -3381,77 +3474,129 @@ void modemConnected() {
 }
 
 void firmwareCheck() {
-  //http://update.retrodisks.com/wirsa-v2.php
+  //http://update.retrodisks.com/wirsa-v3.php
   //This works by checking the latest release tag on the hosted github page
   //I have to call the github API page at https://api.github.com/repos/nullvalue0/WiRSa/releases/latest
-  //However the problem is this only works over SSL and returns a large result as JSON. Hitting SSL 
-  //pages from the ESP8266 is a lot of work, so to get around it a built a very simple PHP script that 
-  //I host on a plain HTTP site. It hits the github API endpoint over HTTPS, parses the JSON and just 
-  //returns the latest version string over HTTP as plain text - this way the ESP8266 can easily check 
+  //However the problem is this only works over SSL and returns a large result as JSON. Hitting SSL
+  //pages from the ESP8266 is a lot of work, so to get around it a built a very simple PHP script that
+  //I host on a plain HTTP site. It hits the github API endpoint over HTTPS, parses the JSON and just
+  //returns the latest version string over HTTP as plain text - this way the ESP8266 can easily check
   //the latest version.
 
-  Serial.println("\nChecking firmware version..."); yield();
+  SerialPrintLn("\nChecking firmware version..."); yield();
   WiFiClient client;
+
   HTTPClient http;
-  if (http.begin(client, "http://update.retrodisks.com/wirsa-v2.php")) {
+  if (http.begin(client, "http://update.retrodisks.com/wirsa-v3.php")) {
       int httpCode = http.GET();
       if (httpCode == 200) {
         http.getString();
         String version = http.getString();
-        Serial.println("Latest Version: " + version + ", Device Version: " + build);
+        SerialPrintLn("Latest Version: " + version + ", Device Version: " + build);
         if (build!=version)
-          Serial.println("WiRSa firmware update available, download the latest release at https://github.com/nullvalue0/WiRSa or use commmand ATFU to apply updates now.");
+          SerialPrintLn("WiRSa firmware update available, download the latest release at https://github.com/nullvalue0/WiRSa or use commmand ATFU to apply updates now.");
         else
-          Serial.println("Your WiRSa is running the latest firmware version.");
+          SerialPrintLn("Your WiRSa is running the latest firmware version.");
       }
       else
-        Serial.println("Firmware version check failed.");
+        SerialPrintLn("Firmware version check failed.");
   }
+  
 }
 
+// void firmwareUpdate() {
+
+//   WiFiClient client;
+
+//   ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
+//   ESPhttpUpdate.onStart(firmwareUpdateStarted);
+//   ESPhttpUpdate.onEnd(firmwareUpdateFinished);
+//   ESPhttpUpdate.onProgress(firmwareUpdateProgress);
+//   ESPhttpUpdate.onError(firmwareUpdateError);
+
+//   t_httpUpdate_return ret = ESPhttpUpdate.update(client, "http://update.retrodisks.com/wirsa-bin-v3.php");
+//   switch (ret) {
+//     case HTTP_UPDATE_FAILED:
+//       Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+//       break;
+
+//     case HTTP_UPDATE_NO_UPDATES:
+//       SerialPrintLn("HTTP_UPDATE_NO_UPDATES");
+//       break;
+
+//     case HTTP_UPDATE_OK:
+//       SerialPrintLn("HTTP_UPDATE_OK");
+//       break;
+//   }
+// }
+
 void firmwareUpdate() {
-  //Similar to the firmware check, I have a proxy php script calls the github, gets the latest release 
+  //Similar to the firmware check, I have a proxy php script calls the github, gets the latest release
   //url, downloads the binary and forwards it over plain HTTP so the ESP8266 can download it and use
   //it for OTA updates. These php scripts are in the github repository under the firmware folder.
 
-  WiFiClient client;
+  SerialPrintLn("Starting OTA update...");
 
-  ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
-  ESPhttpUpdate.onStart(firmwareUpdateStarted);
-  ESPhttpUpdate.onEnd(firmwareUpdateFinished);
-  ESPhttpUpdate.onProgress(firmwareUpdateProgress);
-  ESPhttpUpdate.onError(firmwareUpdateError);
+  // Begin HTTP client
+  HTTPClient http;
+  http.begin("http://update.retrodisks.com/wirsa-bin-v3.php");
 
-  t_httpUpdate_return ret = ESPhttpUpdate.update(client, "http://update.retrodisks.com/wirsa-bin-v2.php");
-  switch (ret) {
-    case HTTP_UPDATE_FAILED:
-      Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
-      break;
+  // Start the update process
+  if (Update.begin(UPDATE_SIZE_UNKNOWN)) {
+    SerialPrintLn("Downloading...");
 
-    case HTTP_UPDATE_NO_UPDATES:
-      Serial.println("HTTP_UPDATE_NO_UPDATES");
-      break;
+    // Start the download
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+      WiFiClient& stream = http.getStream();
+      uint8_t buffer[1024];
+      int bytesRead;
 
-    case HTTP_UPDATE_OK:
-      Serial.println("HTTP_UPDATE_OK");
-      break;
+      // Write the stream to the Update library in chunks
+      while ((bytesRead = stream.readBytes(buffer, sizeof(buffer))) > 0) {
+        if (Update.write(buffer, bytesRead) != bytesRead) {
+          SerialPrintLn("Error during OTA update. Please try again.");
+          Update.end(false); // false parameter indicates a failed update
+          return;
+        }
+      }
+
+      // End the update process
+      if (Update.end(true)) {
+        SerialPrintLn("OTA update complete. Rebooting...");
+        ESP.restart();
+      } else {
+        SerialPrintLn("Error during OTA update. Please try again.");
+        Update.end(false); // false parameter indicates a failed update
+      }
+    } else {
+      SerialPrintLn("Failed to download firmware.");
+      Update.end(false); // false parameter indicates a failed update
+    }
+  } else {
+    SerialPrintLn("Failed to start OTA update.");
   }
+
+  // End HTTP client
+  http.end();
 }
 
 void firmwareUpdateStarted() {
-  Serial.println("HTTP update process started");
+  SerialPrintLn("HTTP update process started");
 }
 
 void firmwareUpdateFinished() {
-  Serial.println("HTTP update process finished...\r\n\r\nPLEASE WAIT, APPLYING UPDATE - DEVICE WILL REBOOT ON IT'S OWN WHEN COMPLETE IN ABOUT 10 SECONDS\r\n\r\n");
+  SerialPrintLn("HTTP update process finished...\r\n\r\nPLEASE WAIT, APPLYING UPDATE - DEVICE WILL REBOOT ON IT'S OWN WHEN COMPLETE IN ABOUT 10 SECONDS\r\n\r\n");
 }
 
 void firmwareUpdateProgress(int cur, int total) {
   Serial.printf("HTTP update process at %d of %d bytes...\r\n", cur, total);
+  PhysicalSerial.printf("HTTP update process at %d of %d bytes...\r\n", cur, total);
 }
 
 void firmwareUpdateError(int err) {
   Serial.printf("HTTP update fatal error code %\r\n", err);
+  PhysicalSerial.printf("HTTP update fatal error code %\r\n", err);
 }
 
 bool function_to_call(void *argument /* optional argument given to in/at/every */) {
@@ -3464,7 +3609,7 @@ void modemLoop()
 
   // Check flow control
   handleFlowControl();
-    
+   
   // Service the Web server
   webServer.handleClient();
 
@@ -3480,20 +3625,20 @@ void modemLoop()
     readSwitches();
   else
     readBackSwitch();
-  if (SW1) {  //UP
+  if (BTNUP) {  //UP
       menuIdx--;
       if (menuIdx<0)
         menuIdx=menuCnt-1;
       modemMenu();
-  } else if (SW2) { //DOWN
+  } else if (BTNDN) { //DOWN
     menuIdx++;
     if (menuIdx>(menuCnt-1))
       menuIdx=0;
     modemMenu();
-  } else if (SW3) { //ENTER
+  } else if (BTNEN) { //ENTER
     dialOut("ATDS" + String(menuIdx));
     modem_timer.every(250, refreshDisplay);
-  } else if (SW4) { //BACK
+  } else if (BTNBK) { //BACK
     //if in a call, first back push ends call, 2nd exits modem mode
     if (cmdMode==true)
       mainMenu(false);
@@ -3508,14 +3653,14 @@ void modemLoop()
     waitSwitches();
   else
     waitBackSwitch();
-    
+   
   /**** AT command mode ****/
   if (cmdMode == true)
   {
     // In command mode - don't exchange with TCP but gather characters to a string
-    if (Serial.available())
+    if (SerialAvailable())
     {
-      char chr = Serial.read();
+      char chr = SerialRead();
 
       if (petTranslate == true)
         // Fix PET MCTerm 1.26C Pet->ASCII encoding to actual ASCII
@@ -3536,7 +3681,7 @@ void modemLoop()
       {
         cmd.remove(cmd.length() - 1);
         if (echo == true) {
-          Serial.write(chr);
+          SerialWrite(chr);
           displayChar(chr, XFER_RECV);
           display.display();
         }
@@ -3545,11 +3690,11 @@ void modemLoop()
       {
         if (cmd.length() < MAX_CMD_LENGTH) cmd.concat(chr);
         if (echo == true) {
-          Serial.write(chr);
+          SerialWrite(chr);
           displayChar(chr, XFER_RECV);
         }
         if (bHex) {
-          Serial.print(chr, HEX);
+          SerialPrint(chr, HEX);
         }
       }
     }
@@ -3558,8 +3703,8 @@ void modemLoop()
   else
   {
     // Transmit from terminal to TCP
-    if (Serial.available())
-    {
+    size_t len = 0;
+    if (SerialAvailable()) {
       led_on();
 
       // In telnet in worst case we have to escape every byte
@@ -3572,24 +3717,48 @@ void modemLoop()
 
       // Read from serial, the amount available up to
       // maximum size of the buffer
-      size_t len = std::min(Serial.available(), max_buf_size);
-      len = Serial.readBytes(&txBuf[0], len);
-
-      //if (len > 0) displayChar('[');
-      // Enter command mode with "+++" sequence
-      for (int i = 0; i < (int)len; i++)
-      {
-        if (txBuf[i] == '+') plusCount++; else plusCount = 0;
-        if (plusCount >= 3)
+      if (Serial.available()) {
+        len = std::min(Serial.available(), max_buf_size);
+        len = Serial.readBytes(&txBuf[0], len);
+        //if (len > 0) displayChar('[');
+        // Enter command mode with "+++" sequence
+        for (int i = 0; i < (int)len; i++)
         {
-          plusTime = millis();
+          if (txBuf[i] == '+') plusCount++; else plusCount = 0;
+          if (plusCount >= 3)
+          {
+            plusTime = millis();
+          }
+          if (txBuf[i] != '+')
+          {
+            plusCount = 0;
+          }
+          displayChar(txBuf[i], XFER_SEND);
         }
-        if (txBuf[i] != '+')
-        {
-          plusCount = 0;
-        }
-        displayChar(txBuf[i], XFER_SEND);
       }
+
+      // Read from serial, the amount available up to
+      // maximum size of the buffer
+      if (PhysicalSerial.available()) {
+        len = std::min(PhysicalSerial.available(), max_buf_size);
+        len = PhysicalSerial.readBytes(&txBuf[0], len);
+        //if (len > 0) displayChar('[');
+        // Enter command mode with "+++" sequence
+        for (int i = 0; i < (int)len; i++)
+        {
+          if (txBuf[i] == '+') plusCount++; else plusCount = 0;
+          if (plusCount >= 3)
+          {
+            plusTime = millis();
+          }
+          if (txBuf[i] != '+')
+          {
+            plusCount = 0;
+          }
+          displayChar(txBuf[i], XFER_SEND);
+        }
+      }
+
       if (len > 0)
       {
         //displayChar(']');
@@ -3633,27 +3802,27 @@ void modemLoop()
       if ((telnet == true) && (rxByte == 0xff))
       {
 #ifdef DEBUG
-        Serial.print("<t>");
+        SerialPrint("<t>");
 #endif
         rxByte = tcpClient.read();
         if (rxByte == 0xff)
         {
           // 2 times 0xff is just an escaped real 0xff
-          Serial.write(0xff); Serial.flush();
+          SerialWrite(0xff); SerialFlush();
         }
         else
         {
           // rxByte has now the first byte of the actual non-escaped control code
 #ifdef DEBUG
-          Serial.print(rxByte);
-          Serial.print(",");
+          SerialPrint(rxByte);
+          SerialPrint(",");
 #endif
           uint8_t cmdByte1 = rxByte;
           rxByte = tcpClient.read();
           uint8_t cmdByte2 = rxByte;
           // rxByte has now the second byte of the actual non-escaped control code
 #ifdef DEBUG
-          Serial.print(rxByte); Serial.flush();
+          SerialPrint(rxByte); SerialFlush();
 #endif
           // We are asked to do some option, respond we won't
           if (cmdByte1 == DO)
@@ -3667,15 +3836,15 @@ void modemLoop()
           }
         }
 #ifdef DEBUG
-        Serial.print("</t>");
+        SerialPrint("</t>");
 #endif
       }
       else
       {
         // Non-control codes pass through freely
-        Serial.write(rxByte); 
+        SerialWrite(rxByte);
         displayChar(rxByte, XFER_RECV);
-        Serial.flush(); yield();
+        SerialFlush(); yield();
        }
       handleFlowControl();
     }
@@ -3689,7 +3858,7 @@ void modemLoop()
     {
       //tcpClient.stop();
       cmdMode = true;
-      sendResult(R_OK);
+      sendResult(R_OK_STAT);
       plusCount = 0;
     }
   }
@@ -3702,7 +3871,7 @@ void modemLoop()
     connectTime = 0;
     callConnected = false;
     setCarrier(callConnected);
-    
+   
     msgFlag=true; //force full menu redraw
     modemConnected();
     //if (tcpServerPort > 0) tcpServer.begin();
@@ -3735,13 +3904,13 @@ bool refreshDisplay(void *)
     display.print(String(bytesRecv));
     display.print(" B");
   }
-  
+ 
   if (sentChanged||recvChanged) {
     sentChanged=false;
     recvChanged=false;
     display.display();
   }
-  
+ 
   return true;
 }
 
@@ -3772,7 +3941,7 @@ void displayChar(char chr) {
   if (chr==10) {
     dispCharCnt+=21-dispLineCnt;
     dispLineCnt=0;
-  } else if (chr==27) { 
+  } else if (chr==27) {
     //throw out the next 2 characters...this isn't right but i'll improve later
     dispAnsiCnt = 1;
     return;
@@ -3796,25 +3965,25 @@ void changeTerminalMode()
   else if (terminalMode=="Viewpoint")
     terminalMode="VT100";
 
-  Serial.println("Terminal Mode set to: " + terminalMode);
+  SerialPrintLn("Terminal Mode set to: " + terminalMode);
 }
 
 void clearScreen()
 {
   if (terminalMode=="VT100")
   {
-    Serial.print((char)27);
-    Serial.print("[2J");  //clear screen
-    Serial.print((char)27);
-    Serial.print("[1;1H"); //cursor first row/col
+    SerialPrint((char)27);
+    SerialPrint("[2J");  //clear screen
+    SerialPrint((char)27);
+    SerialPrint("[1;1H"); //cursor first row/col
   }
   else if (terminalMode=="Viewpoint")
   {
-    Serial.print((char)26); //clear screen
-    Serial.print((char)27);
-    Serial.print("="); //cursor first row/col
-    Serial.print((char)1);
-    Serial.print((char)1);
+    SerialPrint((char)26); //clear screen
+    SerialPrint((char)27);
+    SerialPrint("="); //cursor first row/col
+    SerialPrint((char)1);
+    SerialPrint((char)1);
   }
 }
 
@@ -3842,7 +4011,7 @@ bool displayFile(String filename, bool playback_mode, int begin_position)
       }
       char chr = myFile.read();
       if (chr=='^') //VT escape code
-        Serial.print((char)27);
+        SerialPrint((char)27);
       else if (chr=='`') //Playback escape code
       {
         chr = myFile.read(); //get the next char
@@ -3859,7 +4028,7 @@ bool displayFile(String filename, bool playback_mode, int begin_position)
         }
       }
       else
-        Serial.write(chr);
+        SerialWrite(chr);
       pos++;
     }
     // close the file:
@@ -3867,25 +4036,25 @@ bool displayFile(String filename, bool playback_mode, int begin_position)
     return true;
   } else {
     // if the file didn't open, print an error:
-    Serial.println("error opening '" + filename + "'");
+    SerialPrintLn("error opening '" + filename + "'");
     return false;
   }
 }
 
 void evalKey()
 {
-  Serial.print("Press Key (repeat same key 3 times to exit): ");
-  Serial.println("\n");
-  Serial.println("DEC\tHEX\tCHR");
+  SerialPrint("Press Key (repeat same key 3 times to exit): ");
+  SerialPrintLn("\n");
+  SerialPrintLn("DEC\tHEX\tCHR");
   char lastKey;
   int lastCnt=0;
   while(1) {
     char c = getKey();
-    Serial.print(c, DEC);
-    Serial.print("\t");
-    Serial.print(c, HEX);
-    Serial.print("\t");
-    Serial.println(c);
+    SerialPrint(c, DEC);
+    SerialPrint("\t");
+    SerialPrint(c, HEX);
+    SerialPrint("\t");
+    SerialPrintLn(c);
     if (c==lastKey) {
       lastCnt++;
       if (lastCnt==2)
@@ -3902,8 +4071,8 @@ char getKey()
 {
   while (true)
   {
-    if (Serial.available() > 0)
-      return Serial.read();
+    if (SerialAvailable() > 0)
+      return SerialRead();
   }
 }
 
@@ -3911,9 +4080,9 @@ void waitKey(int key1, int key2)
 {
   while (true)
   {
-    if (Serial.available() > 0)
+    if (SerialAvailable() > 0)
     {
-      char c = Serial.read();
+      char c = SerialRead();
       if (c == key1 || c == key2)
         break;
     }
@@ -3928,20 +4097,20 @@ String getLine()
   {
     if (checkCancel())
       return "";
-    if (Serial.available() > 0)
+    if (SerialAvailable() > 0)
     {
-      c = Serial.read();
+      c = SerialRead();
       if (c==13)
         return line;
       else if (c==8 || c==127) {
         if (line.length()>0) {
-          Serial.print(c);
+          SerialPrint(c);
           line = line.substring(0, line.length()-1);
         }
       }
       else
       {
-        Serial.print(c);
+        SerialPrint(c);
         line += c;
       }
     }
