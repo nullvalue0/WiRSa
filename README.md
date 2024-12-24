@@ -4,7 +4,7 @@ This project is a Wifi - RS232 Serial adapter for getting vintage computers conn
 ![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image1.jpg)
 
 ## Kits & assembled units available for sale
-If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale. I had quite a few PCB's made up and I am trying to keep these as cheap as possible. You can purchase on [Tindie](https://www.tindie.com/products/retrodisks/wirsa-v2-wifi-rs232-serial-modem-adapter-with-sd).
+If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale. I had quite a few PCB's made up and I am trying to keep these as cheap as possible. You can purchase on [Tindie](https://www.tindie.com/products/retrodisks/wirsa-v3-wifi-rs232-serial-modem-adapter-with-sd).
 
 ## Getting Started
 The first thing you probably want to do is try connecting to a BBS. Follow these steps to get connected to your wifi, save your settings and connect to a telnet BBS.
