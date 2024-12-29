@@ -1,7 +1,7 @@
 # RetroDisks WiRSa
 This project is a Wifi - RS232 Serial adapter for getting vintage computers connected to the internet (telnet or http). Use it to connect your vintage computer to a telnet BBS or other internet resources. At it's heart is a Wemos ESP8266 wifi-enabled controller. This project differs from other Wifi Serial adapters in that it adds a micro-SD card module for reading and writing data. The intended use case is for people who have a vintage computer but have no ability (or desire) to create floppies, and doesn't want to modify the computer (by installing a permanent floppy emulation solution something like a Gotek). V2 also adds a 128x64 display and 4 navigation buttons to make setup easier. V3 upgrades the processor to an ESP32, add a battery charging circuit and power switch, and upgrades the RS232 level shifting to a MAX3242 device which is capable of driving all serial lines.
 
-![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image1.jpg)
+![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/2024-12-24T02_32_21.541Z-IMG_20241223_105522_2~2(1).jpg)
 
 ## Kits & assembled units available for sale
 If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale. I had quite a few PCB's made up and I am trying to keep these as cheap as possible. You can purchase on [Tindie](https://www.tindie.com/products/retrodisks/wirsa-v3-wifi-rs232-serial-modem-adapter-with-sd).
@@ -21,7 +21,7 @@ The first thing you probably want to do is try connecting to a BBS. Follow these
 ## History
 This began as a device I built for the filming of Apple TV's "The Shining Girls". There were a number of scenes involving computer terminals. They had the terminals but no idea how to display anything on them. I came up with this device as a means to display a static block of text at the terminal or "playback" a text file - ie: when the actor hits a key on the keyboard, regardless of what key is pressed - the next character from the text file gets printed. This creates the illusion that the actor is actually typing the document in real-time but they're really just mashing keys. I've included this text playback feature in the firmware. The text file is read directly from the SD card. I had previously used a Wemos to build a Wifi modem for my Commodore 64 user port. This device is basically the combination of those 2 projects.
 
-![WiRSa On Film](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image4.jpg)
+![WiRSa On Film](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/2024-12-23T05_33_06.740Z-IMG_20241222_222852_2~2.jpg)
 
 ## Firmware
 The firmware has 3 main functions:  
