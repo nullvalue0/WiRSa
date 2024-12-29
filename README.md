@@ -42,24 +42,20 @@ If you have a WiRSa and want to upgrade the firware to the latest version found 
 
 For programming, remove the 2 white jumpers. This disables the RS232-TTL converter which sometimes causes interference when programming. After programming, replace jumpers for normal use.
 
-![WiRSa BBS Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image3.jpg)
+![WiRSa BBS Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/2024-12-24T02_40_23.319Z-PXL_20241222_223637513~2(1).jpg)
 
 ## Board Design / PCB
 The WiRSA is based on a few cheaply available components and a custom PCB which ties them all together. The components needed are: 
-• WiRSa v2 PCB
-• Lolin (Wemos) D1 mini (which is an ESP8266-based controller with a USB interface and is compatible with Arduino)
-• RS232-to-TTL converter module
-• 128x64 SPI OLED display
-• SD card reader module & 6-pin header
-• (4) right-angle momentary switches
-• (4) 10k resistors
-• (2) jumpers & (2) 2-pin jumper headers
+• WiRSa v3 PCB (populated with some SMD components including SD card reader, MAX3243 line driver, resistors, power switch and JST battery connector)
+• [ESP-WROOM-32D](https://www.aliexpress.us/item/3256806956600100.html) Dev Board with integrated OLED & battery charging circuit
+• [(4) 6x6x9mm momentary switches, right-angle](https://www.ebay.com/itm/172418716968)
+• [DE-9 (DB9) female connector, right angle](https://www.aliexpress.us/item/2251832861448144.htm)
 Everything gets soldered to a custom PCB. The KiCAD schematic, PCB and Gerber files are all included in this repo. 
 
-![WiRSa PCB Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/readme_image5.jpg)
+![WiRSa PCB Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/2024-12-24T02_40_23.319Z-PXL_20241222_223612533~2.jpg)
 
 ## Enclosure
-The enclosure has been created in OpenSCAD and the source is included here as well as a resulting STL. It has a sliding top for easy access to the PCB, openings in the front for the Serial connector, opening in the rear for USB & SD card, and a small hole on the side to access the Wemos reset switch. The cover has an opening for the OLED display.
+The enclosure has been created in OpenSCAD and the source is included here as well as a resulting STL. It has been redesigned to use snap-fittings. STL's are provided for both a version with or without a battery compartment (and battery power switch cover).
 
 ## Get in touch
 Should you have any questions or problems, feel free to email me directly at nullvalue@gmail.com.
