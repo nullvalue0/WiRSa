@@ -99,15 +99,20 @@
 #define LAST_ADDRESS    800
 
 #define SWITCH_PIN 0       // GPIO0 (programmind mode pin)
-#define LED_PIN 2        //LED_BUILTIN          // Status LED
-#define DCD_PIN 2          // DCD Carrier Status
-#define RTS_PIN 4         // RTS Request to Send, connect to host's CTS pin
-#define CTS_PIN 5         // CTS Clear to Send, connect to host's RTS pin
+#define LED_PIN 2          //LED_BUILTIN          // Status LED
 
-#define SW1_PIN 36 //DOWN
-#define SW2_PIN 39 //BACK
-#define SW3_PIN 34 //ENTER
-#define SW4_PIN 35 //UP
+#define DCD_PIN 33         // DCD Carrier Status
+#define RTS_PIN 15         // RTS Request to Send, connect to host's CTS pin
+#define CTS_PIN 27         // CTS Clear to Send, connect to host's RTS pin
+
+#define DTR_PIN 4          // DTR Data Terminal Ready (not yet implemented)
+#define DSR_PIN 26         // DSR Data Set Ready (not yet implemented)
+#define RI_PIN  25         // RI Ring Indicator (not yet implemented)
+
+#define SW1_PIN 36         //DOWN
+#define SW2_PIN 39         //BACK
+#define SW3_PIN 34         //ENTER
+#define SW4_PIN 35         //UP
 
 #define MODE_MAIN 0
 #define MODE_MODEM 1
@@ -144,7 +149,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define TXD2 17
 
 // Global variables
-String build = "v3.01";
+String build = "v3.02";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -280,8 +285,6 @@ WiFiServer tcpServer(LISTEN_PORT);        // port will be set via .begin(port)
 WebServer webServer(80);
 MDNSResponder mdns;
 HardwareSerial PhysicalSerial(2);
-
-void(* resetFunc) (void) = 0; //declare reset function @ address 0
 
 void SerialPrintLn(String s) {
   Serial.println(s);
@@ -1057,11 +1060,15 @@ void setup() {
   pinMode(SW2_PIN, INPUT);
   pinMode(SW3_PIN, INPUT);
   pinMode(SW4_PIN, INPUT);
-  //pinMode(DCD_PIN, OUTPUT);
-  //pinMode(RTS_PIN, OUTPUT);
-  //digitalWrite(RTS_PIN, HIGH); // ready to receive data
-  //pinMode(CTS_PIN, INPUT);
-  //digitalWrite(CTS_PIN, HIGH); // pull up
+  
+  //begin flow control
+  pinMode(DCD_PIN, OUTPUT);
+  pinMode(RTS_PIN, OUTPUT);
+  digitalWrite(RTS_PIN, HIGH); // ready to receive data
+  pinMode(CTS_PIN, INPUT);
+  digitalWrite(CTS_PIN, HIGH); // pull up
+  //end flow control
+
   setCarrier(false);
 
   EEPROM.begin(LAST_ADDRESS + 1);
@@ -2185,13 +2192,13 @@ void settingsLoop()
        SerialPrintLn("** PLEASE WAIT: FACTORY RESET **");
        showMessage("***************\n* PLEASE WAIT *\n*FACTORY RESET*\n***************");
        defaultEEPROM();
-       resetFunc();
+       ESP.restart();
     }
     else if (chr=='R'||chr=='r'||menuSel==6)
     {
       SerialPrintLn("** PLEASE WAIT: REBOOTING **");
       showMessage("***************\n* PLEASE WAIT *\n*  REBOOTING  *\n***************");
-      resetFunc();
+      ESP.restart();
     }    
     else if (chr=='A'||chr=='a'||menuSel==7)
     {
