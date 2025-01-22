@@ -1,6 +1,6 @@
-render_base = true;
-render_cover = true;
-render_battery = true;
+render_base = false;
+render_cover = false;
+render_battery = false;
 render_switch = true;
 
 wall = 2.0;
@@ -54,7 +54,7 @@ module cover(width, length, height, wall, deviation) {
         }
         
         //power switch hole
-        translate([0, wall+43.5, wall+7.5]) {
+        translate([0, wall+44.5, wall+7.5]) {
             cube([5,8,5]);
         }
               
@@ -173,7 +173,7 @@ module base(width, length, height, wall, deviation) {
         }
         
         //power switch hole
-        translate([width, wall+43.5, wall+3.5]) {
+        translate([width, wall+44.5, wall+3.5]) {
             cube([5,8,5]);
         }
         
@@ -229,14 +229,14 @@ module battery(width, length, height, wall, deviation) {
 
 module switch_cover() {
     difference() {
-        cube([5.5,13,4]);
+        cube([5.5,16,4]);
         
         translate([0,5.5,0.375])
             cube([3,2.25,1.75]);
-        translate([1,0,0])
+        translate([2,0,0])
             cube([5,4.5,5]);
-        translate([1,8.5,0])
-            cube([5,5,5]);
+        translate([2,8.5,0])
+            cube([5,8,5]);
     }
 }
 
