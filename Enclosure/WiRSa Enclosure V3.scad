@@ -1,6 +1,6 @@
-render_base = false;
-render_cover = false;
-render_battery = false;
+render_base = true;
+render_cover = true;
+render_battery = true;
 render_switch = true;
 
 wall = 2.0;
