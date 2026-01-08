@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"/c/Users/AHoekstra/.platformio/penv/Scripts/platformio.exe\" run --target upload)",
+      "Bash(\"/c/Users/AHoekstra/.platformio/penv/Scripts/platformio.exe\" run)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:gallium.inria.fr)",
+      "Bash(/c/Users/AHoekstra/.platformio/penv/Scripts/platformio.exe run --target upload)"
+    ]
+  }
+}
