@@ -27,7 +27,7 @@ This began as a device I built for the filming of Apple TV's "The Shining Girls"
 The firmware has 3 main functions:  
 1. MODEM mode, for telnet/BBS use. The Modem Mode of the firmware is based on "WiFi SIXFOUR" (https://github.com/thErZAgH/c64modem), which in turn was based on the "Virtual modem for ESP8266" (https://github.com/jsalin/esp8266_modem).
 2. Text Playback mode, for reading and printing text files from the SD card over the serial line.
-3. File Transfer mode which offers the ability to send and receive data from the SD card with the host computer (so long as the host computer is running a terminal software which supports file transfer). Currently the file transfer protocols XMODEM and YMODEM are supported. There are plans to also implement YMODEM Batch, ZMODEM and KERMIT.
+3. File Transfer mode which offers the ability to send and receive data from the SD card with the host computer (so long as the host computer is running a terminal software which supports file transfer). Currently the file transfer protocols XMODEM, YMODEM and ZMODEM are supported. There are plans to also implement KERMIT.
 
 On a new build, the default serial settings will be 9600 baud, 8-N-1. You can change the baud rate while in Modem Mode (with the SET BAUD RATE (AT$SB=) command) or in the Settings menu on the display.
 
