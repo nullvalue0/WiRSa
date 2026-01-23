@@ -11,6 +11,11 @@
 #include "file_transfer.h"
 #include "playback.h"
 #include "firmware.h"
+#include "slip_mode.h"
+#include "ppp_mode.h"
+#include "wifi_setup.h"
+#include "diagnostics.h"
+#include "web_ui.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <EEPROM.h>
@@ -25,11 +30,14 @@ extern bool telnet;
 extern bool verboseResults;
 extern bool echo;
 extern bool autoAnswer;
+extern bool usbDebug;
 extern int tcpServerPort;
 extern unsigned long connectTime;
 extern unsigned long lastRingMs;
 extern String busyMsg;
 extern WiFiClient tcpClient;
+extern WiFiClient consoleClient;
+extern bool consoleConnected;
 extern WiFiServer tcpServer;
 extern String speedDials[];
 extern byte serialSpeed;
@@ -50,28 +58,10 @@ extern String build;
 extern String fileName;
 extern String files[];
 
-// Constant definitions that might be missing
-#define D_NORMAL 0
-#define D_FLIPPED 1
-#define R_NOANSWER 8
-#define R_OK 0
-#define R_ERROR 4
-#define R_RING 2
-#define R_NOCARRIER 3
-#define R_CONNECT 1
-#define R_CONNECT_1200 5
-#define R_NO_DIALTONE 6
-#define R_BUSY 7
-#define R_OK_STAT 200
-
-// Flow control definitions
-#define F_NONE 0
-#define F_HARDWARE 1
-#define F_SOFTWARE 2
-
-// Pin polarity
-#define P_INVERTED 0
-#define P_NORMAL 1
+enum resultCodes_t { R_OK_STAT, R_CONNECT, R_RING, R_NOCARRIER, R_ERROR, R_NONE, R_NODIALTONE, R_BUSY, R_NOANSWER };
+enum dispOrientation_t { D_NORMAL, D_FLIPPED }; // Normal or Flipped
+enum flowControl_t { F_NONE, F_HARDWARE, F_SOFTWARE };
+enum pinPolarity_t { P_INVERTED, P_NORMAL }; // Is LOW (0) or HIGH (1) active?
 
 // Array sizes (since we can't use sizeof on extern arrays)
 #define BAUDS_COUNT 9
@@ -243,6 +233,8 @@ void displayHelp() {
   SerialPrintLn("FIRMWARE CHECK.: ATFC"); yield();
   SerialPrintLn("FIRMWARE UPDATE: ATFU"); yield();
   SerialPrintLn("EXIT MODEM MODE: ATX"); yield();
+  SerialPrintLn("CONSOLE STATUS.: AT$CON?"); yield();
+  SerialPrintLn("CONSOLE DROP...: AT$CONDROP"); yield();
   SerialPrintLn("QUERY MOST COMMANDS FOLLOWED BY '?'"); yield();
 }
 
@@ -328,17 +320,55 @@ void answerCall() {
 
 // Handle incoming TCP connection
 void handleIncomingConnection() {
-  if (callConnected == 1 || (autoAnswer == false && ringCount > 3)) {
-    // We're in a call already or didn't answer the call after three rings
-    // We didn't answer the call. Notify our party we're busy and disconnect
+  // If we already have an active call, reject with busy message
+  if (callConnected == 1) {
     ringCount = lastRingMs = 0;
     WiFiClient anotherClient = tcpServer.available();
     anotherClient.print(busyMsg);
     anotherClient.print("\r\n");
     anotherClient.print("CURRENT CALL LENGTH: ");
     anotherClient.print(connectTimeString());
-    anotherClient.print("\r\n");
-    anotherClient.print("\r\n");
+    anotherClient.print("\r\n\r\n");
+    anotherClient.flush();
+    anotherClient.stop();
+    return;
+  }
+
+  // Check if this should become a console connection
+  // First telnet connection without a console becomes the management console
+  if (!consoleConnected) {
+    // Accept as console client - stays in command mode
+    consoleClient = tcpServer.available();
+    consoleClient.setNoDelay(true);
+    consoleConnected = true;
+
+    // Send welcome message
+    consoleClient.print("\r\n");
+    consoleClient.print("=================================\r\n");
+    consoleClient.print("   WiRSa Telnet Console " + build + "\r\n");
+    consoleClient.print("=================================\r\n");
+    consoleClient.print("Type AT commands or ATDT to dial\r\n");
+    consoleClient.print("\r\n");
+
+    // Basic telnet negotiation - tell client we'll handle echo
+    uint8_t telnetInit[] = {
+      0xFF, 0xFB, 0x01,  // IAC WILL ECHO
+      0xFF, 0xFB, 0x03,  // IAC WILL SUPPRESS-GO-AHEAD
+      0xFF, 0xFD, 0x03   // IAC DO SUPPRESS-GO-AHEAD
+    };
+    consoleClient.write(telnetInit, sizeof(telnetInit));
+
+    SerialPrintLn("CONSOLE CONNECTED FROM " + ipToString(consoleClient.remoteIP()));
+    return;
+  }
+
+  // Console already connected - handle as traditional call connection
+  // (ring/answer behavior for secondary connections)
+  if (autoAnswer == false && ringCount > 3) {
+    // Didn't answer after three rings - reject
+    ringCount = lastRingMs = 0;
+    WiFiClient anotherClient = tcpServer.available();
+    anotherClient.print("BUSY - Console in use\r\n");
     anotherClient.flush();
     anotherClient.stop();
     return;
@@ -353,6 +383,7 @@ void handleIncomingConnection() {
     return;
   }
 
+  // Auto-answer secondary connections as calls
   if (autoAnswer == true) {
     tcpClient = tcpServer.available();
     sendString(String("RING ") + ipToString(tcpClient.remoteIP()));
@@ -366,6 +397,15 @@ void handleIncomingConnection() {
   }
 }
 
+// Check and handle console disconnection
+void checkConsoleConnection() {
+  if (consoleConnected && !consoleClient.connected()) {
+    consoleConnected = false;
+    Serial.println("CONSOLE DISCONNECTED");
+    PhysicalSerial.println("CONSOLE DISCONNECTED");
+  }
+}
+
 // Hang up current connection
 void hangUp() {
   tcpClient.stop();
@@ -375,75 +415,7 @@ void hangUp() {
   connectTime = 0;
 }
 
-// Web handler for hanging up
-void handleWebHangUp() {
-  String t = "NO CARRIER (" + connectTimeString() + ")";
-  hangUp();
-  webServer.send(200, "text/plain", t);
-}
-
-// Web handler for root page
-void handleRoot() {
-  String page = "WIFI STATUS: ";
-  if (WiFi.status() == WL_CONNECTED) {
-    page.concat("CONNECTED");
-  }
-  if (WiFi.status() == WL_IDLE_STATUS) {
-    page.concat("OFFLINE");
-  }
-  if (WiFi.status() == WL_CONNECT_FAILED) {
-    page.concat("CONNECT FAILED");
-  }
-  if (WiFi.status() == WL_NO_SSID_AVAIL) {
-    page.concat("SSID UNAVAILABLE");
-  }
-  if (WiFi.status() == WL_CONNECTION_LOST) {
-    page.concat("CONNECTION LOST");
-  }
-  if (WiFi.status() == WL_DISCONNECTED) {
-    page.concat("DISCONNECTED");
-  }
-  if (WiFi.status() == WL_SCAN_COMPLETED) {
-    page.concat("SCAN COMPLETED");
-  }
-  yield();
-  page.concat("\nSSID.......: " + WiFi.SSID());
-
-  byte  mac[6];
-  WiFi.macAddress(mac);
-  page.concat("\nMAC ADDRESS: ");
-  page.concat(String(mac[0], HEX));
-  page.concat(":");
-  page.concat(String(mac[1], HEX));
-  page.concat(":");
-  page.concat(String(mac[2], HEX));
-  page.concat(":");
-  page.concat(String(mac[3], HEX));
-  page.concat(":");
-  page.concat(String(mac[4], HEX));
-  page.concat(":");
-  page.concat(String(mac[5], HEX));
-  yield();
-
-  page.concat("\nIP ADDRESS.: "); page.concat(ipToString(WiFi.localIP()));
-  page.concat("\nGATEWAY....: "); page.concat(ipToString(WiFi.gatewayIP()));
-  yield();
-
-  page.concat("\nSUBNET MASK: "); page.concat(ipToString(WiFi.subnetMask()));
-  yield();
-  page.concat("\nSERVER PORT: "); page.concat(tcpServerPort);
-  page.concat("\nCALL STATUS: ");
-  if (callConnected) {
-    page.concat("CONNECTED TO ");
-    page.concat(ipToString(tcpClient.remoteIP()));
-    page.concat("\nCALL LENGTH: "); page.concat(connectTimeString()); yield();
-  } else {
-    page.concat("NOT CONNECTED");
-  }
-  page.concat("\n");
-  webServer.send(200, "text/plain", page);
-  delay(100);
-}
+// Note: Web handlers moved to webserver.cpp module
 
 // Dial out to a host
 void dialOut(String upCmd) {
@@ -452,6 +424,49 @@ void dialOut(String upCmd) {
     sendResult(R_ERROR);
     return;
   }
+
+  // Extract the dial string (after ATDT, ATDP, or ATDI)
+  String dialStr = upCmd.substring(4);
+  dialStr.trim();
+  dialStr.toUpperCase();
+
+  // Check for special dial strings for SLIP mode
+  // Dial "SLIP", "7547" (phone keypad), or "*75"
+  if (dialStr == "SLIP" || dialStr == "7547" || dialStr == "*75" ||
+      dialStr == "*SLIP" || dialStr == "S") {
+    // Check WiFi first
+    if (WiFi.status() != WL_CONNECTED) {
+      SerialPrintLn("\r\nWiFi not connected");
+      sendResult(R_NOCARRIER);
+      return;
+    }
+    // Send CONNECT and enter SLIP mode
+    SerialPrintLn("\r\nCONNECT SLIP");
+    SerialPrint("Gateway: "); SerialPrintLn(ipToString(IPAddress(192,168,7,1)));
+    SerialPrint("Client:  "); SerialPrintLn(ipToString(IPAddress(192,168,7,2)));
+    SerialPrintLn("");
+    delay(100);
+    enterSlipMode();
+    return;
+  }
+
+  // Check for special dial strings for PPP mode
+  // Dial "PPP", "777", or "*77"
+  if (dialStr == "PPP" || dialStr == "777" || dialStr == "*77" ||
+      dialStr == "*PPP" || dialStr == "P") {
+    // Check WiFi first
+    if (WiFi.status() != WL_CONNECTED) {
+      SerialPrintLn("\r\nWiFi not connected");
+      sendResult(R_NOCARRIER);
+      return;
+    }
+    // Send CONNECT and enter PPP mode
+    SerialPrintLn("\r\nCONNECT PPP");
+    delay(100);
+    enterPppMode();
+    return;
+  }
+
   String host, port;
   int portIndex;
   // Dialing a stored number
@@ -857,6 +872,30 @@ void command()
     sendResult(R_OK_STAT);
   }
 
+  /**** Console status ****/
+  else if (upCmd == "AT$CON?") {
+    if (consoleConnected) {
+      sendString("CONSOLE CONNECTED FROM " + ipToString(consoleClient.remoteIP()));
+    } else {
+      sendString("CONSOLE NOT CONNECTED");
+    }
+    sendResult(R_OK_STAT);
+  }
+
+  /**** Disconnect console client ****/
+  else if (upCmd == "AT$CONDROP") {
+    if (consoleConnected) {
+      consoleClient.print("\r\nCONSOLE DISCONNECTED BY HOST\r\n");
+      consoleClient.flush();
+      consoleClient.stop();
+      consoleConnected = false;
+      sendString("CONSOLE DISCONNECTED");
+    } else {
+      sendString("NO CONSOLE CONNECTED");
+    }
+    sendResult(R_OK_STAT);
+  }
+
   /**** See my IP address ****/
   else if (upCmd == "ATIP?")
   {
@@ -919,6 +958,24 @@ void command()
     delete hostChr;
   }
 
+  /**** SLIP Gateway Commands ****/
+  else if (handleSlipCommand(cmd, upCmd)) {
+    // Command was handled by SLIP module
+    sendResult(R_OK_STAT);
+  }
+
+  /**** PPP Gateway Commands ****/
+  else if (handlePppCommand(cmd, upCmd)) {
+    // Command was handled by PPP module
+    sendResult(R_OK_STAT);
+  }
+
+  /**** Diagnostics Commands ****/
+  else if (handleDiagnosticsCommand(cmd, upCmd)) {
+    // Command was handled by Diagnostics module
+    sendResult(R_OK_STAT);
+  }
+
   /**** Unknown command ****/
   else sendResult(R_ERROR);
 
@@ -959,14 +1016,23 @@ void enterModemMode()
 
     modem_timer.every(250, refreshDisplay);
 
-    WiFi.mode(WIFI_STA);
-    connectWiFi();
+    // Check if WiFi is already connected - don't reconnect if so
+    if (WiFi.status() == WL_CONNECTED) {
+        SerialPrintLn("WiFi already connected to " + WiFi.SSID());
+        SerialPrint("IP: "); SerialPrintLn(ipToString(WiFi.localIP()));
+        if (consoleConnected) {
+            SerialPrintLn("Console session preserved");
+        }
+    } else {
+        WiFi.mode(WIFI_STA);
+        connectWiFi();
+    }
     sendResult(R_OK_STAT);
 
     digitalWrite(LED_PIN, LOW); // on
 
-    webServer.on("/", handleRoot);
-    webServer.on("/ath", handleWebHangUp);
+    // Setup web server routes (SPA with API endpoints)
+    setupWebServer();
     webServer.begin();
 
     mdns.begin("WiRSa"); // Set the network hostname to "wirsa.local"
@@ -1049,7 +1115,7 @@ void mainLoop()
         SerialPrintLn("Initialization Complete.");
         fileMenu(false);
       }
-      else if (chr=='P'||chr=='p'||menuSel==2)
+      else if (chr=='T'||chr=='t'||menuSel==2)
       {
         SerialPrint(chr); //echo it back if it was a valid entry
         SerialPrintLn("");
@@ -1063,7 +1129,18 @@ void mainLoop()
         SerialPrintLn("Initialization Complete.");
         playbackMenu(false);
       }
-      else if (chr=='S'||chr=='s'||menuSel==3)
+      else if (chr=='P'||chr=='p'||menuSel==3) // PPP Gateway
+      {
+        SerialPrint(chr); //echo it back if it was a valid entry
+        pppMenu(false);
+      }
+      else if (chr=='U'||chr=='u'||menuSel==4) // Utilities
+      {
+        SerialPrint(chr); //echo it back if it was a valid entry
+        diagnosticsInit();
+        diagnosticsMenu(false);
+      }
+      else if (chr=='C'||chr=='c'||menuSel==5)
       {
         SerialPrint(chr); //echo it back if it was a valid entry
         settingsMenu(false);
@@ -1335,36 +1412,50 @@ void settingsLoop()
     {
       mainMenu(false);
     }
-    else if (chr=='B'||chr=='b'||menuSel==1)
+    else if (chr=='W'||chr=='w'||menuSel==1) // WiFi Setup
+    {
+      wifiSetupInit();
+      wifiSetupLoop();
+    }
+    else if (chr=='B'||chr=='b'||menuSel==2)
     {
       baudMenu(false);
     }
-    else if (chr=='S'||chr=='s'||menuSel==2)
+    else if (chr=='S'||chr=='s'||menuSel==3)
     {
       serialMenu(false);
     }
-    else if (chr=='O'||chr=='o'||menuSel==3)
+    else if (chr=='O'||chr=='o'||menuSel==4)
     {
       orientationMenu(false);
     }
-    else if (chr=='D'||chr=='d'||menuSel==4)
+    else if (chr=='D'||chr=='d'||menuSel==5)
     {
       defaultModeMenu(false);
     }
-    else if (chr=='F'||chr=='f'||menuSel==5)
+    else if (chr=='U'||chr=='u'||menuSel==6)
+    {
+      usbDebug = !usbDebug;
+      writeSettings();
+      SerialPrintLn(usbDebug ? "USB Debug: ENABLED" : "USB Debug: DISABLED");
+      showMessage(usbDebug ? "USB Debug\n\nENABLED" : "USB Debug\n\nDISABLED");
+      delay(1500);  // Pause so the message can be read on the display
+      settingsMenu(false);
+    }
+    else if (chr=='F'||chr=='f'||menuSel==7)
     {
        SerialPrintLn("** PLEASE WAIT: FACTORY RESET **");
        showMessage("***************\n* PLEASE WAIT *\n*FACTORY RESET*\n***************");
        defaultEEPROM();
        ESP.restart();
     }
-    else if (chr=='R'||chr=='r'||menuSel==6)
+    else if (chr=='R'||chr=='r'||menuSel==8)
     {
       SerialPrintLn("** PLEASE WAIT: REBOOTING **");
       showMessage("***************\n* PLEASE WAIT *\n*  REBOOTING  *\n***************");
       ESP.restart();
     }
-    else if (chr=='A'||chr=='a'||menuSel==7)
+    else if (chr=='A'||chr=='a'||menuSel==9)
     {
       SerialPrintLn("\n** WiRSa BUILD:   " + build + " **");
       showMessage("***************\n* WiRSa BUILD *\n*    " + build + "    *\n***************");
@@ -1598,6 +1689,37 @@ void modemLoop()
     handleIncomingConnection();
   }
 
+  // Check if console client disconnected
+  checkConsoleConnection();
+
+  // Handle telnet IAC sequences from console in command mode
+  if (consoleConnected && consoleClient.available() && cmdMode) {
+    // Peek at the byte - if it's IAC (0xFF), handle telnet protocol
+    int peek = consoleClient.peek();
+    if (peek == 0xFF) {
+      // Read and handle IAC sequence
+      consoleClient.read();  // consume IAC
+      if (consoleClient.available()) {
+        uint8_t cmd = consoleClient.read();
+        if (cmd == 0xFF) {
+          // Escaped 0xFF - put it back for normal processing (can't really, so skip)
+        } else if (cmd == 0xFB || cmd == 0xFC || cmd == 0xFD || cmd == 0xFE) {
+          // WILL/WONT/DO/DONT - read option byte and respond
+          if (consoleClient.available()) {
+            uint8_t opt = consoleClient.read();
+            if (cmd == 0xFD) {  // DO - respond WONT
+              uint8_t resp[] = { 0xFF, 0xFC, opt };
+              consoleClient.write(resp, 3);
+            } else if (cmd == 0xFB) {  // WILL - respond DO
+              uint8_t resp[] = { 0xFF, 0xFD, opt };
+              consoleClient.write(resp, 3);
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (cmdMode == true)
     readSwitches();
   else
@@ -1736,6 +1858,48 @@ void modemLoop()
         }
       }
 
+      // Read from console client (telnet), filtering out IAC sequences
+      if (consoleConnected && consoleClient.available()) {
+        size_t consoleLen = 0;
+        while (consoleClient.available() && consoleLen < (size_t)max_buf_size) {
+          int peek = consoleClient.peek();
+          if (peek == 0xFF) {
+            // Handle telnet IAC sequence - don't send to remote
+            consoleClient.read();  // consume IAC
+            if (consoleClient.available()) {
+              uint8_t iacCmd = consoleClient.read();
+              if (iacCmd == 0xFF) {
+                // Escaped 0xFF - this is actual data
+                txBuf[consoleLen++] = 0xFF;
+              } else if (iacCmd == 0xFB || iacCmd == 0xFC || iacCmd == 0xFD || iacCmd == 0xFE) {
+                // WILL/WONT/DO/DONT - read and discard option byte
+                if (consoleClient.available()) consoleClient.read();
+              }
+              // Other IAC commands are just discarded
+            }
+          } else {
+            txBuf[consoleLen++] = consoleClient.read();
+          }
+        }
+        if (consoleLen > 0) {
+          len = consoleLen;
+          // Enter command mode with "+++" sequence from console too
+          for (int i = 0; i < (int)len; i++)
+          {
+            if (txBuf[i] == '+') plusCount++; else plusCount = 0;
+            if (plusCount >= 3)
+            {
+              plusTime = millis();
+            }
+            if (txBuf[i] != '+')
+            {
+              plusCount = 0;
+            }
+            displayChar(txBuf[i], XFER_SEND);
+          }
+        }
+      }
+
       if (len > 0)
       {
         //displayChar(']');
@@ -1861,6 +2025,8 @@ void modemLoop()
 // Refresh display timer callback
 bool refreshDisplay(void *)
 {
+  static uint8_t wifiUpdateCounter = 0;
+
   if (speedDialShown) {
     display.clearDisplay();
     modemConnected();  //refresh the whole modem screen
@@ -1881,6 +2047,13 @@ bool refreshDisplay(void *)
     display.setCursor(39, 53);
     display.print(String(bytesRecv));
     display.print(" B");
+  }
+
+  // Update WiFi signal strength icon every ~2 seconds (8 x 250ms)
+  wifiUpdateCounter++;
+  if (wifiUpdateCounter >= 8) {
+    wifiUpdateCounter = 0;
+    showWifiIcon();  // This will update the signal bars based on current RSSI
   }
 
   if (sentChanged||recvChanged) {

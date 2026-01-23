@@ -70,7 +70,7 @@ String padRight(String s, int len) {
 
 void mainMenu(bool arrow) {
   menuMode=MODE_MAIN;
-  showMenu("MAIN", mainMenuDisp, 4, (arrow?MENU_DISP:MENU_BOTH), 0);
+  showMenu("MAIN", mainMenuDisp, 6, (arrow?MENU_DISP:MENU_BOTH), 0);
 }
 
 //returns true/false depending on if default menu item should be set
@@ -257,7 +257,7 @@ void playbackMenu(bool arrow) {
 
 void settingsMenu(bool arrow) {
   menuMode = MODE_SETTINGS;
-  showMenu("SETTINGS", settingsMenuDisp, 8, (arrow?MENU_DISP:MENU_BOTH), 0);
+  showMenu("CONFIG", settingsMenuDisp, 10, (arrow?MENU_DISP:MENU_BOTH), 0);
 }
 
 void orientationMenu(bool arrow) {

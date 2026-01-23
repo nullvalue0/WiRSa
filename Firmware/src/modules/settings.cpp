@@ -34,6 +34,7 @@
 #define ORIENTATION_ADDRESS 780
 #define DEFAULTMODE_ADDRESS 790
 #define SERIALCONFIG_ADDRESS 791
+#define USB_DEBUG_ADDRESS 792
 #define LISTEN_PORT 23
 
 // Global variables (defined in main.cpp)
@@ -42,6 +43,7 @@ extern byte serialSpeed, serialConfig;
 extern bool echo, autoAnswer, telnet, verboseResults, petTranslate;
 extern int tcpServerPort;
 extern byte flowControl, pinPolarity, dispOrientation, defaultMode;
+extern bool usbDebug;
 extern String speedDials[10];
 extern const int speedDialAddresses[];
 
@@ -63,6 +65,7 @@ void writeSettings() {
   EEPROM.write(ORIENTATION_ADDRESS, byte(dispOrientation));
   EEPROM.write(DEFAULTMODE_ADDRESS, byte(defaultMode));
   EEPROM.write(SERIALCONFIG_ADDRESS, serialConfig);
+  EEPROM.write(USB_DEBUG_ADDRESS, byte(usbDebug));
 
   for (int i = 0; i < 10; i++) {
     setEEPROM(speedDials[i], speedDialAddresses[i], 50);
@@ -87,6 +90,7 @@ void readSettings() {
   dispOrientation = EEPROM.read(ORIENTATION_ADDRESS);
   defaultMode = EEPROM.read(DEFAULTMODE_ADDRESS);
   serialConfig = EEPROM.read(SERIALCONFIG_ADDRESS);
+  usbDebug = EEPROM.read(USB_DEBUG_ADDRESS);
 
   for (int i = 0; i < 10; i++) {
     speedDials[i] = getEEPROM(speedDialAddresses[i], 50);
@@ -128,6 +132,34 @@ void defaultEEPROM() {
 
   EEPROM.write(ORIENTATION_ADDRESS, 0x00);
   EEPROM.write(DEFAULTMODE_ADDRESS, 0x00);
+  EEPROM.write(USB_DEBUG_ADDRESS, 0x01);  // USB debug enabled by default
+
+  // SLIP Gateway defaults (addresses 800-880)
+  // Gateway IP: 192.168.7.1
+  EEPROM.write(800, 192);
+  EEPROM.write(801, 168);
+  EEPROM.write(802, 7);
+  EEPROM.write(803, 1);
+  // Client IP: 192.168.7.2
+  EEPROM.write(804, 192);
+  EEPROM.write(805, 168);
+  EEPROM.write(806, 7);
+  EEPROM.write(807, 2);
+  // Subnet: 255.255.255.0
+  EEPROM.write(808, 255);
+  EEPROM.write(809, 255);
+  EEPROM.write(810, 255);
+  EEPROM.write(811, 0);
+  // DNS: 8.8.8.8
+  EEPROM.write(812, 8);
+  EEPROM.write(813, 8);
+  EEPROM.write(814, 8);
+  EEPROM.write(815, 8);
+  // Clear port forward entries
+  for (int i = 816; i < 880; i++) {
+    EEPROM.write(i, 0);
+  }
+
   EEPROM.commit();
 }
 

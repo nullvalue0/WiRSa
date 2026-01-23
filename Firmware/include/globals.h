@@ -11,6 +11,9 @@
 #include "SD.h"
 #include "arduino-timer.h"
 
+// Debug flags - uncomment to enable verbose debug output
+#define PPP_DEBUG    // Enable PPP/LCP/IPCP debug output on Serial
+
 // Pin definitions
 #define SWITCH_PIN 0       // GPIO0 (programming mode pin)
 #define LED_PIN 2          // Status LED
@@ -48,6 +51,11 @@
 #define MODE_DEFAULTMODE 8
 #define MODE_PROTOCOL 9
 #define MODE_SERIALCONFIG 10
+#define MODE_SLIP 11
+#define MODE_PPP 12
+#define MODE_WIFI_SETUP 13
+#define MODE_WIFI_PASSWORD 14
+#define MODE_DIAGNOSTICS 15
 
 // Menu modes
 #define MENU_BOTH 0
@@ -100,7 +108,8 @@
 #define ORIENTATION_ADDRESS 780
 #define DEFAULTMODE_ADDRESS 790
 #define SERIALCONFIG_ADDRESS 791
-#define LAST_ADDRESS    800
+#define USB_DEBUG_ADDRESS 792
+#define LAST_ADDRESS    920   // Extended for SLIP (800-880) and PPP (900-920)
 
 // Version
 #define VERSIONA 0
@@ -233,6 +242,7 @@ enum ZMStateEnum {
 // Global objects
 extern Adafruit_SSD1306 display;
 extern WiFiClient tcpClient;
+extern WiFiClient consoleClient;  // Telnet console client (separate from call client)
 extern WiFiServer tcpServer;
 extern WebServer webServer;
 extern MDNSResponder mdns;
@@ -244,6 +254,7 @@ extern String build;
 extern String cmd;
 extern bool cmdMode;
 extern bool callConnected;
+extern bool consoleConnected;  // Telnet console is connected
 extern bool telnet;
 extern bool verboseResults;
 extern int tcpServerPort;

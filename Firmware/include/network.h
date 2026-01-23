@@ -10,6 +10,7 @@ void disconnectWiFi();
 void displayNetworkStatus();
 String ipToString(IPAddress ip);
 void showWifiIcon();
+int getSignalBars();  // Returns 0-4 based on WiFi RSSI
 void setBaudRate(int inSpeed);
 void setCarrier(byte carrier);
 void showCallIcon();

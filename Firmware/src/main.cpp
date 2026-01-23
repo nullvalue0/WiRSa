@@ -40,8 +40,12 @@
  **************************************************************************/
 
  /*
+ changes 3.04
+ - added PPP mode/feature
+ - added USB Debug output option
+
  changes 3.03
- - restructured code, using platform.io now instead of Arduino IDE
+ - refactored code, using platform.io now instead of Arduino IDE
  - fixed SD card r/w
  - fixed IP display (ATI etc)
  - added ZModem support
@@ -73,11 +77,15 @@
 #include "serial_io.h"
 #include "settings.h"
 #include "network.h"
-#include "display_menu.h"  // ✅ Phase 2 complete
-#include "firmware.h"      // ✅ Phase 3 complete
-#include "playback.h"      // ✅ Phase 4 complete
-#include "file_transfer.h" // ✅ Phase 5 complete
-#include "modem.h"         // ✅ Phase 6 complete
+#include "display_menu.h"
+#include "firmware.h"
+#include "playback.h"
+#include "file_transfer.h"
+#include "modem.h"
+#include "slip_mode.h"     // SLIP gateway mode
+#include "ppp_mode.h"      // PPP gateway mode
+#include "wifi_setup.h"    // WiFi setup wizard
+#include "diagnostics.h"   // Diagnostic tools
 
 #define VERSIONA 0
 #define VERSIONB 1
@@ -116,7 +124,7 @@
 #define ORIENTATION_ADDRESS 780
 #define DEFAULTMODE_ADDRESS 790
 #define SERIALCONFIG_ADDRESS 791
-#define LAST_ADDRESS    800
+// LAST_ADDRESS is now defined in globals.h (880 for SLIP config)
 
 #define SWITCH_PIN 0       // GPIO0 (programmind mode pin)
 #define LED_PIN 2          //LED_BUILTIN          // Status LED
@@ -248,7 +256,7 @@ const uint32_t crc32tab[256] PROGMEM = {
 
 
 // Global variables
-String build = "v3.03";
+String build = "v3.04";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -281,13 +289,14 @@ extern const int bauds[] = { 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 1
 String baudDisp[] = { "300", "1200", "2400", "4800", "9600", "19.2k", "38.4k", "57.6k", "115k" };
 byte serialSpeed;
 
-String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Playback Text", "Settings" };
-String settingsMenuDisp[] = { "MAIN", "Baud Rate", "Serial Config", "Orientation", "Default Menu", "Factory Reset", "Reboot", "About" };
+String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Text Playback", "PPP Gateway", "Utilities", "Config" };
+String settingsMenuDisp[] = { "MAIN", "WiFi Setup", "Baud Rate", "Serial Config", "Orientation", "Default Menu", "USB Debug", "Factory Reset", "Reboot", "About" };
 String orientationMenuDisp[] = { "Normal", "Flipped" };
 String playbackMenuDisp[] = { "MAIN", "List Files", "Display File", "Playback File", "Evaluate Key", "Terminal Mode" };
 String fileMenuDisp[] = { "MAIN", "List Files on SD", "Send (from SD)", "Recieve (to SD)" };
 String protocolMenuDisp[] = { "BACK", "Raw", "XModem", "YModem", "ZModem" }; //, "Kermit" };
 String defaultModeDisp[] = { "Main Menu", "MODEM Mode" };
+String diagnosticsMenuDisp[] = { "BACK", "Auto-Detect Baud", "Hex Dump Mode", "Loopback Test", "Signal Monitor", "Information" };
 
 bool echo = true;
 bool autoAnswer = false;
@@ -307,6 +316,7 @@ enum dispOrientation_t { D_NORMAL, D_FLIPPED }; // Normal or Flipped
 byte dispOrientation = D_NORMAL;
 enum defaultMode_t { D_MAINMENU, D_MODEMMENU }; // Main or Modem
 byte defaultMode = D_MAINMENU;
+bool usbDebug = true;  // Enable USB serial debug output (default: enabled)
 
 int menuMode = MODE_MAIN;
 int xferMode = XFER_SEND;
@@ -380,6 +390,8 @@ extern const uint8_t PROGMEM phon_symbol[] = {
 #define DONT 0xfe
 
 WiFiClient tcpClient;
+WiFiClient consoleClient;                 // Telnet console client (separate from call client)
+bool consoleConnected = false;            // Telnet console is connected
 WiFiServer tcpServer(LISTEN_PORT);        // port will be set via .begin(port)
 WebServer webServer(80);
 MDNSResponder mdns;
@@ -573,4 +585,14 @@ void loop()
     defaultModeLoop();
   else if (menuMode==MODE_PROTOCOL)
     protocolLoop();
+  else if (menuMode==MODE_SLIP)
+    slipLoop();
+  else if (menuMode==MODE_PPP)
+    pppLoop();
+  else if (menuMode==MODE_WIFI_SETUP)
+    wifiSetupLoop();
+  else if (menuMode==MODE_WIFI_PASSWORD)
+    wifiPasswordLoop();
+  else if (menuMode==MODE_DIAGNOSTICS)
+    diagnosticsLoop();
 }

@@ -42,6 +42,8 @@ extern HardwareSerial PhysicalSerial;
 extern byte pinPolarity;
 extern bool callConnected;
 extern WiFiClient tcpClient;
+extern WiFiClient consoleClient;
+extern bool consoleConnected;
 
 void connectWiFi() {
   if (ssid == "" || password == "") {
@@ -73,7 +75,7 @@ void connectWiFi() {
     SerialPrint("CONNECTED TO "); SerialPrintLn(WiFi.SSID());
     SerialPrint("IP ADDRESS: "); SerialPrintLn(ipToString(WiFi.localIP()));
     if (tcpServerPort > 0) {
-      SerialPrint("LISTENING ON PORT "); SerialPrintLn(tcpServerPort);
+      SerialPrint("LISTENING ON PORT "); SerialPrintLn(String(tcpServerPort));
       tcpServer.begin();
     }
     modemConnected();
@@ -82,13 +84,87 @@ void connectWiFi() {
   }
 }
 
+// Get signal strength level (0-4) from RSSI
+// Returns: 0 = no signal, 1 = weak, 2 = fair, 3 = good, 4 = excellent
+int getSignalBars() {
+  if (WiFi.status() != WL_CONNECTED) return 0;
+
+  int rssi = WiFi.RSSI();
+  if (rssi > -50) return 4;       // Excellent
+  else if (rssi > -60) return 3;  // Good
+  else if (rssi > -70) return 2;  // Fair
+  else if (rssi > -80) return 1;  // Weak
+  else return 0;                   // Very weak / no signal
+}
+
+// Draw a dithered (gray) bar by alternating pixels in a checkerboard pattern
+void drawDitheredBar(int x, int y, int w, int h) {
+  for (int py = y; py < y + h; py++) {
+    for (int px = x; px < x + w; px++) {
+      // Checkerboard pattern: draw pixel if (px + py) is even
+      if ((px + py) % 2 == 0) {
+        display.drawPixel(px, py, SSD1306_BLACK);
+      }
+    }
+  }
+}
+
 void showWifiIcon() {
+  // Icon position and size (in header area which has white background)
+  const int iconX = 72;
+  const int iconY = 4;
+  const int iconW = 11;
+  const int iconH = 8;
+
+  // Clear the icon area first (fill with white since header is white)
+  display.fillRect(iconX, iconY, iconW, iconH, SSD1306_WHITE);
+
   if (WiFi.status() == WL_CONNECTED) {
-    digitalWrite(LED_PIN, LOW);  // on
-    display.drawBitmap(72, 4, wifi_symbol, 8, 7, SSD1306_BLACK);
+    digitalWrite(LED_PIN, LOW);  // LED on
+
+    int bars = getSignalBars();
+
+    // Draw signal bars (drawing in BLACK on white header background)
+    // 4 bars, each 2 pixels wide with 1 pixel gap
+    // Heights: bar1=2px, bar2=4px, bar3=6px, bar4=8px (from bottom at iconY+iconH)
+
+    int barWidth = 2;
+    int gap = 1;
+    int baseY = iconY + iconH;  // Bottom of icon area
+
+    // Bar 1 (shortest, leftmost) - height 2
+    if (bars >= 1) {
+      display.fillRect(iconX, baseY - 2, barWidth, 2, SSD1306_BLACK);
+    } else {
+      drawDitheredBar(iconX, baseY - 2, barWidth, 2);
+    }
+
+    // Bar 2 - height 4
+    if (bars >= 2) {
+      display.fillRect(iconX + barWidth + gap, baseY - 4, barWidth, 4, SSD1306_BLACK);
+    } else {
+      drawDitheredBar(iconX + barWidth + gap, baseY - 4, barWidth, 4);
+    }
+
+    // Bar 3 - height 6
+    if (bars >= 3) {
+      display.fillRect(iconX + 2*(barWidth + gap), baseY - 6, barWidth, 6, SSD1306_BLACK);
+    } else {
+      drawDitheredBar(iconX + 2*(barWidth + gap), baseY - 6, barWidth, 6);
+    }
+
+    // Bar 4 (tallest, rightmost) - height 8
+    if (bars >= 4) {
+      display.fillRect(iconX + 3*(barWidth + gap), baseY - 8, barWidth, 8, SSD1306_BLACK);
+    } else {
+      drawDitheredBar(iconX + 3*(barWidth + gap), baseY - 8, barWidth, 8);
+    }
+
   } else {
-    digitalWrite(LED_PIN, HIGH); //off
-    display.fillRect(72, 4, 8, 7, SSD1306_WHITE);
+    digitalWrite(LED_PIN, HIGH); // LED off
+    // Draw X for no connection
+    display.drawLine(iconX + 1, iconY + 1, iconX + iconW - 2, iconY + iconH - 2, SSD1306_BLACK);
+    display.drawLine(iconX + iconW - 2, iconY + 1, iconX + 1, iconY + iconH - 2, SSD1306_BLACK);
   }
   display.display();
 }
@@ -201,6 +277,13 @@ void displayNetworkStatus() {
     SerialPrint("CONNECTED TO "); SerialPrintLn(ipToString(tcpClient.remoteIP())); yield();
     SerialPrint("CALL LENGTH: "); SerialPrintLn(connectTimeString()); yield();
   } else {
+    SerialPrintLn("NOT CONNECTED"); yield();
+  }
+  SerialPrint("CONSOLE....: "); yield();
+  if (consoleConnected) {
+    SerialPrint("CONNECTED FROM "); SerialPrintLn(ipToString(consoleClient.remoteIP())); yield();
+  } else {
+    SerialPrintLn("NOT CONNECTED"); yield();
   }
 }
 

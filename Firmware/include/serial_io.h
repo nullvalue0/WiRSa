@@ -4,7 +4,12 @@
 #include <Arduino.h>
 
 // Serial communication wrapper functions
-// These functions write to both Serial (USB) and PhysicalSerial (UART2) simultaneously
+// These functions write to Serial (USB), PhysicalSerial (UART2), and console (telnet) simultaneously
+// When binary mode is active (PPP/SLIP), text output is suppressed on PhysicalSerial
+
+// Binary mode control - when active, SerialPrint* only outputs to USB Serial
+extern bool binaryModeActive;
+void setBinaryMode(bool active);
 
 void SerialPrintLn(String s);
 void SerialPrintLn(char c, int format);
@@ -27,5 +32,17 @@ void SerialFlush();
 int SerialAvailable();
 int SerialRead();
 void SerialWrite(int c);
+
+// Console-specific functions (for telnet IAC handling)
+int ConsoleAvailable();
+int ConsoleRead();
+void ConsolePrint(String s);
+void ConsolePrintLn(String s);
+
+// USB Debug functions with timestamps
+// These only output to USB Serial (not PhysicalSerial) and include timestamps
+void UsbDebugPrint(String s);
+void UsbDebugPrintLn(String s);
+String getTimestamp();
 
 #endif // SERIAL_IO_H
