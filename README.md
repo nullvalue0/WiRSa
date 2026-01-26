@@ -1,6 +1,6 @@
 # RetroDisks WiRSa v3 - WiFi RS232 Serial Modem Adapter
 
-The WiRSa v3 is a WiFi-to-RS232 serial adapter designed for legacy computing systems. It allows vintage computers to connect to modern networks via WiFi, supporting telnet BBS connectivity, file transfers, and network gateway functionality.
+The WiRSa v3 is a WiFi-to-RS232 serial adapter designed to get vintage computers connected to the internet (telnet or http). Use it to connect your vintage computer to a telnet BBS or other internet resources.. It allows vintage computers to connect to modern networks via WiFi, supporting telnet BBS connectivity, file transfers, and network gateway functionality. This project differs from other Wifi Serial adapters in that it adds a micro-SD card module for reading and writing data. The intended use case is for people who have a vintage computer but have no ability (or desire) to create floppies, and doesn't want to modify the computer (by installing a permanent floppy emulation solution something like a Gotek). Includes a 128x64 display, 4 navigation buttons, ESP32 processor, battery charging circuit and power switch, and upgrades the RS232 level shifting to a MAX3242 device which is capable of driving all serial lines.
 
 ![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/2024-12-23T05_33_06.740Z-IMG_20241222_222852_2~2.jpg)
 
