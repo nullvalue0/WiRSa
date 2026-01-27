@@ -126,7 +126,11 @@ To transfer files:
 
 ## SLIP / PPP Gateway Mode
 
-The PPP Gateway mode enables TCP/IP networking for vintage computers with PPP client support. This allows systems like classic Macs, Windows 3.x, or other retro computers to browse the web and access network services. Tested with Windows 98 Dial-up Networking and ETHERSL/mTCP under DOS. You can activate these gateway modes directly from their menu (over serial or on OLED display), or by dialing a special number. Call '777' or 'PPP' to enable the PPP gateway. PPP automatically assigns an IP address, so leave DHCP selected in your settings. Call '7547' or 'SLIP' to enable the SLIP gateway. SLIP requires you to manually specify your IP address. Try using Gateway: 192.168.7.1, Client: 192.168.7.2, DNS Server: 8.8.8.8. Remember to set these values both in the WiRSa SLIP menu and in your networking configurating on the computer.
+The SLIP/PPP Gateway modes enables TCP/IP networking for vintage computers with proper support and TCP stack. Tested with Windows 98 Dial-up Networking and ETHERSL/mTCP under DOS. 
+
+You can activate these gateway modes directly from their menu (over serial or on OLED display), or by dialing a special number. No need to flash a different firmware!
+**Call '777' or 'PPP'** to enable the PPP gateway. PPP automatically assigns an IP address, so leave DHCP selected in your settings. 
+**Call '7547' or 'SLIP'** to enable the SLIP gateway. SLIP requires you to manually specify your IP address. Try using Gateway: 192.168.7.1, Client: 192.168.7.2, DNS Server: 8.8.8.8. Remember to set these values both in the WiRSa SLIP menu and in your networking configurating on the computer.
 
 ## Diagnostics
 
