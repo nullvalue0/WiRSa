@@ -34,8 +34,9 @@ If you prefer to save yourself some time, I have some units (fully assembled or 
 3. **Text Playback** - Display text files from SD card through the serial port
 4. **PPP Gateway** - Point-to-Point Protocol gateway for TCP/IP networking
 5. **SLIP Gateway** - Serial Line Internet Protocol gateway
-6. **Utilities** - Diagnostics and troubleshooting tools including signal monitoring and loopback testing
-7. **Config** - Settings for baud rate, serial configuration, display orientation, and more
+6. **Telnet Server** - Remote into your vintage computer or serial device over telnet
+7. **Utilities** - Diagnostics and troubleshooting tools including signal monitoring and loopback testing
+8. **Config** - Settings for baud rate, serial configuration, display orientation, and more
 
 ### Software Features
 
