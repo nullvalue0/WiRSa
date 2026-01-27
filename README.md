@@ -32,8 +32,8 @@ If you prefer to save yourself some time, I have some units (fully assembled or 
 1. **MODEM Mode** - Hayes-compatible AT command modem emulation for telnet/BBS connectivity
 2. **File Transfer** - Binary file transfer directly from SD card via XModem, YModem, and ZModem protocols
 3. **Text Playback** - Display text files from SD card through the serial port
-4. **PPP Gateway** - Point-to-Point Protocol gateway for TCP/IP networking
-5. **SLIP Gateway** - Serial Line Internet Protocol gateway
+4. **PPP Gateway** - Point-to-Point Protocol gateway/server for TCP/IP networking
+5. **SLIP Gateway** - Serial Line Internet Protocol gateway/server for TCP/IP networking
 6. **Telnet Server** - Remote into your vintage computer or serial device over telnet
 7. **Utilities** - Diagnostics and troubleshooting tools including signal monitoring and loopback testing
 8. **Config** - Settings for baud rate, serial configuration, display orientation, and more
