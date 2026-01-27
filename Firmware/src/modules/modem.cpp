@@ -431,20 +431,17 @@ void dialOut(String upCmd) {
   dialStr.toUpperCase();
 
   // Check for special dial strings for SLIP mode
-  // Dial "SLIP", "7547" (phone keypad), or "*75"
-  if (dialStr == "SLIP" || dialStr == "7547" || dialStr == "*75" ||
-      dialStr == "*SLIP" || dialStr == "S") {
+  // Dial "SLIP", "888", "7547" (phone keypad), "*75", or "S"
+  if (dialStr == "SLIP" || dialStr == "7547" || dialStr == "888") {
     // Check WiFi first
     if (WiFi.status() != WL_CONNECTED) {
       SerialPrintLn("\r\nWiFi not connected");
       sendResult(R_NOCARRIER);
       return;
     }
-    // Send CONNECT and enter SLIP mode
+    // Send simple CONNECT message (Windows 98 DUN compatible)
+    // IP info shown on USB Serial/OLED after binary mode enabled
     SerialPrintLn("\r\nCONNECT SLIP");
-    SerialPrint("Gateway: "); SerialPrintLn(ipToString(IPAddress(192,168,7,1)));
-    SerialPrint("Client:  "); SerialPrintLn(ipToString(IPAddress(192,168,7,2)));
-    SerialPrintLn("");
     delay(100);
     enterSlipMode();
     return;
@@ -452,8 +449,7 @@ void dialOut(String upCmd) {
 
   // Check for special dial strings for PPP mode
   // Dial "PPP", "777", or "*77"
-  if (dialStr == "PPP" || dialStr == "777" || dialStr == "*77" ||
-      dialStr == "*PPP" || dialStr == "P") {
+  if (dialStr == "PPP" || dialStr == "777") {
     // Check WiFi first
     if (WiFi.status() != WL_CONNECTED) {
       SerialPrintLn("\r\nWiFi not connected");
@@ -1134,13 +1130,18 @@ void mainLoop()
         SerialPrint(chr); //echo it back if it was a valid entry
         pppMenu(false);
       }
-      else if (chr=='U'||chr=='u'||menuSel==4) // Utilities
+      else if (chr=='S'||chr=='s'||menuSel==4) // SLIP Gateway
+      {
+        SerialPrint(chr); //echo it back if it was a valid entry
+        slipMenu(false);
+      }
+      else if (chr=='U'||chr=='u'||menuSel==5) // Utilities
       {
         SerialPrint(chr); //echo it back if it was a valid entry
         diagnosticsInit();
         diagnosticsMenu(false);
       }
-      else if (chr=='C'||chr=='c'||menuSel==5)
+      else if (chr=='C'||chr=='c'||menuSel==6) // Config
       {
         SerialPrint(chr); //echo it back if it was a valid entry
         settingsMenu(false);

@@ -75,9 +75,10 @@ void connectWiFi() {
     SerialPrint("CONNECTED TO "); SerialPrintLn(WiFi.SSID());
     SerialPrint("IP ADDRESS: "); SerialPrintLn(ipToString(WiFi.localIP()));
     if (tcpServerPort > 0) {
-      SerialPrint("LISTENING ON PORT "); SerialPrintLn(String(tcpServerPort));
+      SerialPrint("TELNET LISTENING ON PORT "); SerialPrintLn(String(tcpServerPort));
       tcpServer.begin();
     }
+    SerialPrintLn("HTTP CONFIG ON PORT 80 (http://wirsa.local)");
     modemConnected();
     showWifiIcon();
     firmwareCheck();

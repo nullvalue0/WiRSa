@@ -230,9 +230,13 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
                 IPCP_DEBUG_F("IPCP: Client requests IP %d.%d.%d.%d\n",
                              requestedIP[0], requestedIP[1],
                              requestedIP[2], requestedIP[3]);
+                IPCP_DEBUG_F("IPCP: Pool start is %d.%d.%d.%d\n",
+                             ctx->pool.poolStart[0], ctx->pool.poolStart[1],
+                             ctx->pool.poolStart[2], ctx->pool.poolStart[3]);
 
                 // If client requests 0.0.0.0, assign from pool
                 if (requestedIP == IPAddress(0, 0, 0, 0)) {
+                    IPCP_DEBUG("IPCP: Branch: Client requests 0.0.0.0");
                     // Allocate IP from our pool
                     if (!ctx->peerIPAssigned) {
                         ctx->peerIP = ipcpAllocateIP(ctx);
@@ -261,9 +265,12 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
                 else if (requestedIP[0] == ctx->pool.poolStart[0] &&
                          requestedIP[1] == ctx->pool.poolStart[1] &&
                          requestedIP[2] == ctx->pool.poolStart[2]) {
+                    IPCP_DEBUG("IPCP: Branch: Client requests IP in pool range");
                     // Check if it's a valid pool address
                     int offset = requestedIP[3] - ctx->pool.poolStart[3];
+                    IPCP_DEBUG_F("IPCP: Offset=%d, PPP_IP_POOL_SIZE=%d\n", offset, PPP_IP_POOL_SIZE);
                     if (offset >= 0 && offset < PPP_IP_POOL_SIZE) {
+                        IPCP_DEBUG("IPCP: Offset valid, ACKing IP");
                         ctx->peerIP = requestedIP;
                         ctx->peerIPAssigned = true;
                         ctx->pool.allocated[offset] = true;
@@ -273,6 +280,7 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
                         memcpy(&ackOptions[ackLen], &options[pos], optLen2);
                         ackLen += optLen2;
                     } else {
+                        IPCP_DEBUG("IPCP: Offset invalid, NAKing");
                         // NAK with our pool address
                         if (!ctx->peerIPAssigned) {
                             ctx->peerIP = ipcpAllocateIP(ctx);
@@ -288,6 +296,7 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
                 }
                 // Client requests arbitrary IP - NAK with our assigned IP
                 else {
+                    IPCP_DEBUG("IPCP: Branch: Client requests arbitrary IP, NAKing");
                     if (!ctx->peerIPAssigned) {
                         ctx->peerIP = ipcpAllocateIP(ctx);
                         ctx->peerIPAssigned = true;
@@ -307,8 +316,13 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
                 IPAddress requestedDns(options[pos + 2], options[pos + 3],
                                        options[pos + 4], options[pos + 5]);
 
+                IPCP_DEBUG_F("IPCP: Client requests Primary DNS %d.%d.%d.%d\n",
+                             requestedDns[0], requestedDns[1],
+                             requestedDns[2], requestedDns[3]);
+
                 if (requestedDns == IPAddress(0, 0, 0, 0)) {
                     // NAK with our DNS
+                    IPCP_DEBUG("IPCP: NAKing Primary DNS with our value");
                     nakOptions[nakLen++] = IPCP_OPT_PRIMARY_DNS;
                     nakOptions[nakLen++] = 6;
                     nakOptions[nakLen++] = ctx->primaryDns[0];
@@ -317,6 +331,7 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
                     nakOptions[nakLen++] = ctx->primaryDns[3];
                 } else {
                     // Accept any DNS they request (they might want a specific one)
+                    IPCP_DEBUG("IPCP: ACKing Primary DNS");
                     memcpy(&ackOptions[ackLen], &options[pos], optLen2);
                     ackLen += optLen2;
                 }
@@ -328,8 +343,13 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
                 IPAddress requestedDns(options[pos + 2], options[pos + 3],
                                        options[pos + 4], options[pos + 5]);
 
+                IPCP_DEBUG_F("IPCP: Client requests Secondary DNS %d.%d.%d.%d\n",
+                             requestedDns[0], requestedDns[1],
+                             requestedDns[2], requestedDns[3]);
+
                 if (requestedDns == IPAddress(0, 0, 0, 0)) {
                     // NAK with our secondary DNS
+                    IPCP_DEBUG("IPCP: NAKing Secondary DNS with our value");
                     nakOptions[nakLen++] = IPCP_OPT_SECONDARY_DNS;
                     nakOptions[nakLen++] = 6;
                     nakOptions[nakLen++] = ctx->secondaryDns[0];
@@ -337,6 +357,7 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
                     nakOptions[nakLen++] = ctx->secondaryDns[2];
                     nakOptions[nakLen++] = ctx->secondaryDns[3];
                 } else {
+                    IPCP_DEBUG("IPCP: ACKing Secondary DNS");
                     memcpy(&ackOptions[ackLen], &options[pos], optLen2);
                     ackLen += optLen2;
                 }
@@ -376,11 +397,17 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
     }
 
     // Send response (priority: Reject > Nak > Ack)
+    IPCP_DEBUG_F("IPCP: Response decision: ackLen=%d, nakLen=%d, rejLen=%d\n",
+                 ackLen, nakLen, rejLen);
+
     if (rejLen > 0) {
+        IPCP_DEBUG("IPCP: Sending Configure-Reject (some options rejected)");
         ipcpSendConfigReject(ctx, ppp, id, rejOptions, rejLen);
     } else if (nakLen > 0) {
+        IPCP_DEBUG("IPCP: Sending Configure-Nak (some options need different values)");
         ipcpSendConfigNak(ctx, ppp, id, nakOptions, nakLen);
     } else {
+        IPCP_DEBUG("IPCP: Sending Configure-Ack (all options acceptable)");
         ipcpSendConfigAck(ctx, ppp, id, ackOptions, ackLen);
 
         // Update state

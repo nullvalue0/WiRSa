@@ -12,13 +12,17 @@
 
 // Connection table sizes (ESP32 RAM limited - ~320KB total)
 #define NAT_MAX_TCP_CONNECTIONS  16    // Max concurrent TCP connections
-#define NAT_MAX_UDP_SESSIONS     8     // Max concurrent UDP sessions
+#define NAT_MAX_UDP_SESSIONS     32    // Max concurrent UDP sessions (increased for DNS)
+#define NAT_MAX_ICMP_SESSIONS    8     // Max concurrent ICMP (ping) sessions
 #define NAT_MAX_PORT_FORWARDS    8     // Max port forwarding rules
 
 // Timeout values (milliseconds)
-#define NAT_TCP_TIMEOUT_MS       300000  // 5 minutes for TCP
-#define NAT_UDP_TIMEOUT_MS       60000   // 1 minute for UDP
+#define NAT_TCP_TIMEOUT_MS       1800000 // 30 minutes for established TCP (IRC, etc)
+#define NAT_UDP_TIMEOUT_MS       30000   // 30 seconds for UDP
 #define NAT_TCP_SYN_TIMEOUT_MS   30000   // 30 seconds for connection setup
+#define NAT_ICMP_TIMEOUT_MS      10000   // 10 seconds for ICMP
+#define NAT_TCP_KEEPALIVE_MS     300000  // 5 minutes between keepalives
+#define NAT_TCP_STALL_TIMEOUT_MS 60000   // 60s stall detection
 
 // Ephemeral port range for NAT
 #define NAT_PORT_START           10000
@@ -90,6 +94,8 @@ struct NatTcpEntry {
 
     // Timestamps
     unsigned long lastActivity;
+    unsigned long lastKeepalive;    // Last keepalive sent
+    unsigned long lastServerData;   // Last data received from server
     unsigned long created;
 };
 
@@ -112,6 +118,21 @@ struct NatUdpEntry {
     uint16_t natPort;
 
     // Timestamp
+    unsigned long lastActivity;
+};
+
+// ============================================================================
+// NAT ICMP Session Entry
+// ============================================================================
+
+struct NatIcmpEntry {
+    bool active;
+
+    IPAddress srcIP;        // Original source (SLIP client)
+    IPAddress dstIP;        // Destination (ping target)
+    uint16_t id;            // ICMP identifier
+    uint16_t sequence;      // ICMP sequence number
+
     unsigned long lastActivity;
 };
 
@@ -141,6 +162,7 @@ struct NatContext {
     // Connection tables
     NatTcpEntry tcpTable[NAT_MAX_TCP_CONNECTIONS];
     NatUdpEntry udpTable[NAT_MAX_UDP_SESSIONS];
+    NatIcmpEntry icmpTable[NAT_MAX_ICMP_SESSIONS];
 
     // Port forwarding rules
     PortForwardEntry portForwards[NAT_MAX_PORT_FORWARDS];
@@ -148,6 +170,9 @@ struct NatContext {
     // UDP socket for outbound NAT
     WiFiUDP udpSocket;
     bool udpSocketBound;
+
+    // ICMP raw socket for ping NAT (lwIP raw socket)
+    void* icmpPcb;          // struct raw_pcb* (opaque to avoid header dependency)
 
     // Port forwarding servers
     WiFiServer* tcpForwardServers[NAT_MAX_PORT_FORWARDS];
@@ -161,6 +186,7 @@ struct NatContext {
     uint32_t droppedPackets;
     uint32_t tcpConnections;
     uint32_t udpSessions;
+    uint32_t icmpPackets;
 };
 
 // ============================================================================
@@ -239,6 +265,9 @@ void natProcessPacket(NatContext* ctx, uint8_t* packet, uint16_t length);
 // Poll all active connections for incoming data
 // Returns number of packets sent back to vintage computer
 int natPollConnections(NatContext* ctx);
+
+// Process pending ICMP replies (call from main loop)
+void natProcessPendingIcmp(NatContext* ctx);
 
 // Clean up expired connections
 void natCleanupExpired(NatContext* ctx);

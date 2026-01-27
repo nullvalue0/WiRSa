@@ -698,7 +698,30 @@ void loadPppSettings() {
         EEPROM.read(PPP_SECONDARY_DNS_ADDRESS + 3)
     );
 
-    pppModeCtx.configChanged = false;
+    // Validate loaded configuration
+    // Check that pool start matches gateway IP's network (first 3 octets should be related)
+    // and that IPs are in valid private ranges
+    bool valid = true;
+
+    // Gateway and pool should be on same subnet
+    if (pppModeCtx.config.gatewayIP[0] != pppModeCtx.config.poolStart[0] ||
+        pppModeCtx.config.gatewayIP[1] != pppModeCtx.config.poolStart[1] ||
+        pppModeCtx.config.gatewayIP[2] != pppModeCtx.config.poolStart[2]) {
+        valid = false;
+    }
+
+    // Gateway IP should be valid (not 0.0.0.0 or 255.x.x.x)
+    if (pppModeCtx.config.gatewayIP[0] == 0 || pppModeCtx.config.gatewayIP[0] >= 240) {
+        valid = false;
+    }
+
+    if (!valid) {
+        SerialPrintLn("PPP: Invalid config detected, resetting to defaults");
+        pppDefaultConfig();
+        savePppSettings();
+    } else {
+        pppModeCtx.configChanged = false;
+    }
 }
 
 // ============================================================================

@@ -40,6 +40,10 @@
  **************************************************************************/
 
  /*
+ changes 3.05
+ - added SLIP mode/feature
+ - added greatly improved web config
+
  changes 3.04
  - added PPP mode/feature
  - added USB Debug output option
@@ -256,7 +260,7 @@ const uint32_t crc32tab[256] PROGMEM = {
 
 
 // Global variables
-String build = "v3.04";
+String build = "v3.05";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -289,7 +293,7 @@ extern const int bauds[] = { 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 1
 String baudDisp[] = { "300", "1200", "2400", "4800", "9600", "19.2k", "38.4k", "57.6k", "115k" };
 byte serialSpeed;
 
-String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Text Playback", "PPP Gateway", "Utilities", "Config" };
+String mainMenuDisp[] = { "MODEM Mode", "File Transfer", "Text Playback", "PPP Gateway", "SLIP Gateway", "Utilities", "Config" };
 String settingsMenuDisp[] = { "MAIN", "WiFi Setup", "Baud Rate", "Serial Config", "Orientation", "Default Menu", "USB Debug", "Factory Reset", "Reboot", "About" };
 String orientationMenuDisp[] = { "Normal", "Flipped" };
 String playbackMenuDisp[] = { "MAIN", "List Files", "Display File", "Playback File", "Evaluate Key", "Terminal Mode" };

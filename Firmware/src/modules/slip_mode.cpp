@@ -12,6 +12,12 @@
 #include "modem.h"
 #include <EEPROM.h>
 
+// Result code for AT OK response (matches enum in modem.cpp)
+#define R_OK_STAT 0
+
+// Debug output support
+extern bool usbDebug;
+
 // ============================================================================
 // Global Contexts
 // ============================================================================
@@ -21,8 +27,8 @@ NatContext natCtx;
 SlipModeContext slipModeCtx;
 
 // Menu definitions
-String slipMenuDisp[] = { "MAIN", "Start Gateway", "Configure IP", "Port Forwards", "Statistics" };
-String slipActiveMenuDisp[] = { "Stop Gateway", "Show Status", "Statistics" };
+String slipMenuDisp[] = { "MAIN", "Start Gateway", "Configure IP", "Port Forwards", "View Stats" };
+String slipActiveMenuDisp[] = { "Stop Gateway", "Show Status", "View Stats" };
 String portForwardMenuDisp[] = { "Back", "Add Forward", "Remove Forward", "List Forwards" };
 
 // External functions from display_menu.cpp
@@ -141,7 +147,7 @@ static void slipMenuLoop() {
             // Port Forwards
             slipConfigurePortForward();
         }
-        else if (chr == 'T' || chr == 't' || menuSel == 4) {
+        else if (chr == 'V' || chr == 'v' || menuSel == 4) {
             // Statistics
             slipShowStatistics();
         }
@@ -162,7 +168,13 @@ static void slipActiveLoop() {
     if (BTNBK) {
         waitSwitches();
         exitSlipMode();
-        slipMenu(false);
+        // Return to appropriate mode
+        if (slipModeCtx.previousMenuMode == MODE_MODEM) {
+            menuMode = MODE_MODEM;
+            sendResult(R_OK_STAT);  // AT OK response
+        } else {
+            slipMenu(false);
+        }
         return;
     }
 
@@ -178,13 +190,14 @@ static void slipActiveLoop() {
         slipMenu(true);
     }
 
-    // Check for serial commands (e.g., +++ to exit)
+    // Check for escape commands on USB Serial ONLY (not PhysicalSerial)
+    // PhysicalSerial carries binary SLIP data that shouldn't be interpreted as commands
     static char escapeBuffer[4] = {0};
     static int escapePos = 0;
     static unsigned long lastEscapeTime = 0;
 
-    while (SerialAvailable()) {
-        char c = SerialRead();
+    while (Serial.available()) {
+        char c = Serial.read();
 
         // Check for +++ escape sequence
         if (c == '+') {
@@ -198,11 +211,14 @@ static void slipActiveLoop() {
                 // Exit to command mode
                 SerialPrintLn("\r\nOK");
                 exitSlipMode();
-                slipMenu(false);
+                if (slipModeCtx.previousMenuMode == MODE_MODEM) {
+                    menuMode = MODE_MODEM;
+                } else {
+                    slipMenu(false);
+                }
                 return;
             }
         } else {
-            // Not escape sequence - this byte goes to SLIP
             escapePos = 0;
         }
     }
@@ -214,6 +230,10 @@ static void slipActiveLoop() {
 
         if (frameLen > 0) {
             // Complete IP packet received - process through NAT
+            if (usbDebug) {
+                UsbDebugPrint("");
+                Serial.printf("SLIP: Received frame, %d bytes\r\n", frameLen);
+            }
             natProcessPacket(&natCtx, slipCtx.rxBuffer, frameLen);
         }
     }
@@ -244,6 +264,16 @@ static void slipActiveLoop() {
 // ============================================================================
 
 void enterSlipMode() {
+    // Save previous mode to return to on disconnect
+    slipModeCtx.previousMenuMode = menuMode;
+
+    // Switch to SLIP mode
+    menuMode = MODE_SLIP;
+
+    // Enable binary mode - suppress text output to PhysicalSerial
+    // SLIP requires clean binary channel on RS232
+    setBinaryMode(true);
+
     SerialPrintLn("\r\nEntering SLIP Gateway Mode...");
 
     // Load settings from EEPROM
@@ -292,6 +322,9 @@ void enterSlipMode() {
 // ============================================================================
 
 void exitSlipMode() {
+    // Disable binary mode - restore text output to PhysicalSerial
+    setBinaryMode(false);
+
     SerialPrintLn("\r\nExiting SLIP Gateway Mode...");
 
     // Shutdown NAT (closes all connections)

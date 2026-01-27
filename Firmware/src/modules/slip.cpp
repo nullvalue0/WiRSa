@@ -6,6 +6,10 @@
 
 #include "slip.h"
 #include "globals.h"
+#include "serial_io.h"
+
+// Debug support
+extern bool usbDebug;
 
 // ============================================================================
 // Initialize SLIP Context
@@ -112,6 +116,11 @@ int slipReceiveByte(SlipContext* ctx, uint8_t byte) {
 // Takes raw IP packet data and sends it with SLIP framing to PhysicalSerial
 
 void slipSendFrame(SlipContext* ctx, const uint8_t* data, uint16_t length) {
+    if (usbDebug) {
+        UsbDebugPrint("");
+        Serial.printf("SLIP: Sending frame, %d bytes\r\n", length);
+    }
+
     // RFC 1055 recommends sending END at start to flush any line noise
     // This also serves as frame delimiter for back-to-back frames
     PhysicalSerial.write(SLIP_END);

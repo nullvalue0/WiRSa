@@ -36,6 +36,7 @@ struct SlipModeContext {
     SlipModeState state;
     SlipConfig config;
     bool configChanged;
+    int previousMenuMode;  // Track previous mode for proper return
 };
 
 // ============================================================================

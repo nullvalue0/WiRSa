@@ -10,6 +10,26 @@
 #include "globals.h"
 #include "serial_io.h"
 
+// lwIP includes for raw ICMP socket
+extern "C" {
+#include "lwip/raw.h"
+#include "lwip/ip_addr.h"
+#include "lwip/icmp.h"
+#include "lwip/inet_chksum.h"
+}
+
+// Global context pointer for ICMP callback (lwIP callbacks don't have user data)
+static NatContext* g_icmpNatCtx = nullptr;
+
+// ============================================================================
+// Debug output (controlled by usbDebug setting)
+// ============================================================================
+
+extern bool usbDebug;
+
+#define NAT_DEBUG(msg) if (usbDebug) { UsbDebugPrintLn(msg); }
+#define NAT_DEBUG_F(fmt, ...) if (usbDebug) { UsbDebugPrint(""); Serial.printf(fmt "\r\n", ##__VA_ARGS__); }
+
 // Forward declarations for internal functions
 static void natProcessTcp(NatContext* ctx, uint8_t* packet, uint16_t length,
                           IpHeader* ip, uint8_t ipHeaderLen);
@@ -30,6 +50,11 @@ static void natSendTcpToClient(NatContext* ctx, NatTcpEntry* entry,
                                 uint8_t* data, uint16_t length, uint8_t flags);
 static void natSendUdpToClient(NatContext* ctx, NatUdpEntry* entry,
                                 uint8_t* data, uint16_t length);
+static void natSendIcmpToClient(NatContext* ctx, NatIcmpEntry* entry,
+                                 uint8_t type, uint8_t code,
+                                 uint8_t* data, uint16_t length);
+static u8_t natIcmpRecvCallback(void* arg, struct raw_pcb* pcb,
+                                 struct pbuf* p, const ip_addr_t* addr);
 
 // External SLIP context (defined in slip_mode.cpp)
 extern SlipContext slipCtx;
@@ -59,6 +84,11 @@ void natInit(NatContext* ctx) {
         ctx->udpTable[i].active = false;
     }
 
+    // Initialize ICMP table
+    for (int i = 0; i < NAT_MAX_ICMP_SESSIONS; i++) {
+        ctx->icmpTable[i].active = false;
+    }
+
     // Initialize port forwards
     for (int i = 0; i < NAT_MAX_PORT_FORWARDS; i++) {
         ctx->portForwards[i].active = false;
@@ -68,12 +98,28 @@ void natInit(NatContext* ctx) {
     ctx->udpSocketBound = false;
     ctx->nextPort = NAT_PORT_START;
 
+    // Create ICMP raw socket for ping NAT
+    ctx->icmpPcb = nullptr;
+    struct raw_pcb* pcb = raw_new(IP_PROTO_ICMP);
+    if (pcb) {
+        raw_recv(pcb, natIcmpRecvCallback, ctx);
+        raw_bind(pcb, IP_ADDR_ANY);
+        ctx->icmpPcb = pcb;
+        NAT_DEBUG("NAT: ICMP raw socket created");
+    } else {
+        NAT_DEBUG("NAT: Failed to create ICMP raw socket");
+    }
+
+    // Set global context for ICMP callback
+    g_icmpNatCtx = ctx;
+
     // Statistics
     ctx->packetsToInternet = 0;
     ctx->packetsFromInternet = 0;
     ctx->droppedPackets = 0;
     ctx->tcpConnections = 0;
     ctx->udpSessions = 0;
+    ctx->icmpPackets = 0;
 }
 
 // ============================================================================
@@ -102,6 +148,11 @@ void natShutdown(NatContext* ctx) {
         ctx->udpTable[i].active = false;
     }
 
+    // Clear ICMP sessions
+    for (int i = 0; i < NAT_MAX_ICMP_SESSIONS; i++) {
+        ctx->icmpTable[i].active = false;
+    }
+
     // Stop port forward servers
     for (int i = 0; i < NAT_MAX_PORT_FORWARDS; i++) {
         if (ctx->tcpForwardServers[i]) {
@@ -115,6 +166,13 @@ void natShutdown(NatContext* ctx) {
         ctx->udpSocket.stop();
         ctx->udpSocketBound = false;
     }
+
+    // Close ICMP raw socket
+    if (ctx->icmpPcb) {
+        raw_remove((struct raw_pcb*)ctx->icmpPcb);
+        ctx->icmpPcb = nullptr;
+    }
+    g_icmpNatCtx = nullptr;
 }
 
 // ============================================================================
@@ -194,6 +252,7 @@ uint16_t tcpUdpChecksum(IpHeader* ip, const uint8_t* payload, uint16_t payloadLe
 void natProcessPacket(NatContext* ctx, uint8_t* packet, uint16_t length) {
     // Minimum IP header is 20 bytes
     if (length < 20) {
+        NAT_DEBUG_F("NAT: Packet too short (%d bytes)", length);
         ctx->droppedPackets++;
         return;
     }
@@ -203,6 +262,7 @@ void natProcessPacket(NatContext* ctx, uint8_t* packet, uint16_t length) {
     // Check IP version (must be 4)
     uint8_t version = (ip->versionIhl >> 4) & 0x0F;
     if (version != 4) {
+        NAT_DEBUG_F("NAT: Invalid IP version %d", version);
         ctx->droppedPackets++;
         return;
     }
@@ -210,6 +270,7 @@ void natProcessPacket(NatContext* ctx, uint8_t* packet, uint16_t length) {
     // Get header length
     uint8_t headerLen = (ip->versionIhl & 0x0F) * 4;
     if (headerLen < 20 || headerLen > length) {
+        NAT_DEBUG_F("NAT: Invalid header length %d", headerLen);
         ctx->droppedPackets++;
         return;
     }
@@ -222,9 +283,20 @@ void natProcessPacket(NatContext* ctx, uint8_t* packet, uint16_t length) {
 
     if (originalChecksum != calculatedChecksum) {
         // Bad checksum - drop packet
+        NAT_DEBUG_F("NAT: IP checksum mismatch: got 0x%04X, calc 0x%04X",
+                    ntohs(originalChecksum), ntohs(calculatedChecksum));
         ctx->droppedPackets++;
         return;
     }
+
+    // Log incoming packet info
+    uint8_t* srcBytes = (uint8_t*)&ip->srcIP;
+    uint8_t* dstBytes = (uint8_t*)&ip->dstIP;
+    NAT_DEBUG_F("NAT: RX proto=%d %d.%d.%d.%d -> %d.%d.%d.%d len=%d",
+                ip->protocol,
+                srcBytes[0], srcBytes[1], srcBytes[2], srcBytes[3],
+                dstBytes[0], dstBytes[1], dstBytes[2], dstBytes[3],
+                length);
 
     // Get total length from header
     uint16_t totalLength = ntohs(ip->totalLength);
@@ -266,8 +338,11 @@ static void natProcessTcp(NatContext* ctx, uint8_t* packet, uint16_t length,
     TcpHeader* tcp = (TcpHeader*)(packet + ipHeaderLen);
     uint16_t srcPort = ntohs(tcp->srcPort);
     uint16_t dstPort = ntohs(tcp->dstPort);
-    IPAddress dstIP(ntohl(ip->dstIP));
-    IPAddress srcIP(ntohl(ip->srcIP));
+    // Construct IPs from network byte order (bytes are already in correct order)
+    uint8_t* dstBytes = (uint8_t*)&ip->dstIP;
+    uint8_t* srcBytes = (uint8_t*)&ip->srcIP;
+    IPAddress dstIP(dstBytes[0], dstBytes[1], dstBytes[2], dstBytes[3]);
+    IPAddress srcIP(srcBytes[0], srcBytes[1], srcBytes[2], srcBytes[3]);
 
     // Get TCP header length
     uint8_t tcpHeaderLen = ((tcp->dataOffset >> 4) & 0x0F) * 4;
@@ -289,16 +364,31 @@ static void natProcessTcp(NatContext* ctx, uint8_t* packet, uint16_t length,
     if (flags & TCP_FLAG_SYN) {
         // New connection request
         if (!entry) {
+            // Check for stuck connection to same destination - helps with reconnection
+            for (int i = 0; i < NAT_MAX_TCP_CONNECTIONS; i++) {
+                NatTcpEntry* e = &ctx->tcpTable[i];
+                if (e->active && e->srcIP == srcIP && e->dstIP == dstIP && e->dstPort == dstPort) {
+                    NAT_DEBUG_F("NAT: Closing stuck connection to same dest (port %d)", e->srcPort);
+                    if (e->client) {
+                        e->client->stop();
+                        delete e->client;
+                        e->client = nullptr;
+                    }
+                    e->active = false;
+                }
+            }
+
             entry = natCreateTcpEntry(ctx, srcIP, srcPort, dstIP, dstPort);
             if (!entry) {
                 // Table full
                 ctx->droppedPackets++;
+                NAT_DEBUG("NAT: TCP table full");
                 return;
             }
         }
 
-        // Store initial sequence number
-        entry->clientSeq = ntohl(tcp->seqNum);
+        // Store initial sequence number (+1 because SYN consumes 1 seq number)
+        entry->clientSeq = ntohl(tcp->seqNum) + 1;
         entry->clientAck = ntohl(tcp->ackNum);
 
         // Initiate connection to remote server
@@ -306,22 +396,30 @@ static void natProcessTcp(NatContext* ctx, uint8_t* packet, uint16_t length,
             entry->state = NAT_TCP_SYN_SENT;
             entry->created = millis();
             entry->lastActivity = millis();
+            entry->lastKeepalive = millis();
 
             // Create WiFiClient and connect
             if (!entry->client) {
                 entry->client = new WiFiClient();
             }
 
+            NAT_DEBUG_F("NAT: TCP connecting to %d.%d.%d.%d:%d",
+                        dstIP[0], dstIP[1], dstIP[2], dstIP[3], dstPort);
+
             if (entry->client->connect(dstIP, dstPort)) {
                 entry->state = NAT_TCP_ESTABLISHED;
                 ctx->packetsToInternet++;
                 ctx->tcpConnections++;
+                NAT_DEBUG("NAT: TCP connected");
+
+                // Initialize serverAck for flow control
+                entry->serverAck = entry->serverSeq;
 
                 // Send SYN-ACK back to client
-                // We'll simulate this by immediately allowing data flow
                 natSendTcpToClient(ctx, entry, nullptr, 0,
                                    TCP_FLAG_SYN | TCP_FLAG_ACK);
             } else {
+                NAT_DEBUG("NAT: TCP connect failed");
                 // Connection failed - send RST
                 natSendTcpToClient(ctx, entry, nullptr, 0, TCP_FLAG_RST);
                 entry->active = false;
@@ -333,8 +431,10 @@ static void natProcessTcp(NatContext* ctx, uint8_t* packet, uint16_t length,
     }
 
     if (!entry) {
-        // No connection for this packet - send RST
+        // No connection for this packet
         ctx->droppedPackets++;
+        NAT_DEBUG_F("NAT: TCP no entry for %d.%d.%d.%d:%d",
+                    dstIP[0], dstIP[1], dstIP[2], dstIP[3], dstPort);
         return;
     }
 
@@ -362,21 +462,34 @@ static void natProcessTcp(NatContext* ctx, uint8_t* packet, uint16_t length,
         return;
     }
 
-    // Handle data
+    // Handle data from client
     if (payloadLen > 0 && entry->state == NAT_TCP_ESTABLISHED) {
         if (entry->client && entry->client->connected()) {
-            entry->client->write(payload, payloadLen);
+            size_t written = entry->client->write(payload, payloadLen);
+            if (written != payloadLen) {
+                NAT_DEBUG_F("NAT: TCP client->server write failed: %d/%d bytes", written, payloadLen);
+            } else {
+                NAT_DEBUG_F("NAT: TCP client->server: %d bytes", payloadLen);
+            }
             entry->clientSeq = ntohl(tcp->seqNum) + payloadLen;
             ctx->packetsToInternet++;
+            entry->lastActivity = millis();
 
             // Send ACK back
             natSendTcpToClient(ctx, entry, nullptr, 0, TCP_FLAG_ACK);
+        } else {
+            NAT_DEBUG("NAT: TCP client->server failed: not connected");
         }
     }
 
-    // Update ACK tracking
+    // Update ACK tracking - client's ACK acknowledges data WE sent
     if (flags & TCP_FLAG_ACK) {
-        entry->clientAck = ntohl(tcp->ackNum);
+        entry->lastActivity = millis();
+        uint32_t newAck = ntohl(tcp->ackNum);
+        if (newAck != entry->serverAck) {
+            NAT_DEBUG_F("NAT: TCP ACK update: serverAck %u -> %u", entry->serverAck, newAck);
+            entry->serverAck = newAck;
+        }
     }
 }
 
@@ -396,8 +509,11 @@ static void natProcessUdp(NatContext* ctx, uint8_t* packet, uint16_t length,
     uint16_t srcPort = ntohs(udp->srcPort);
     uint16_t dstPort = ntohs(udp->dstPort);
     uint16_t udpLen = ntohs(udp->length);
-    IPAddress dstIP(ntohl(ip->dstIP));
-    IPAddress srcIP(ntohl(ip->srcIP));
+    // Construct IPs from network byte order (bytes are already in correct order)
+    uint8_t* dstBytes = (uint8_t*)&ip->dstIP;
+    uint8_t* srcBytes = (uint8_t*)&ip->srcIP;
+    IPAddress dstIP(dstBytes[0], dstBytes[1], dstBytes[2], dstBytes[3]);
+    IPAddress srcIP(srcBytes[0], srcBytes[1], srcBytes[2], srcBytes[3]);
 
     if (udpLen < 8 || ipHeaderLen + udpLen > length) {
         ctx->droppedPackets++;
@@ -431,6 +547,125 @@ static void natProcessUdp(NatContext* ctx, uint8_t* packet, uint16_t length,
 }
 
 // ============================================================================
+// Pending ICMP Reply Buffer (for deferred processing from callback)
+// ============================================================================
+
+static struct {
+    bool pending;
+    IPAddress srcIP;
+    uint16_t id;
+    uint16_t seq;
+    uint8_t data[64];   // Ping payload (typically 32 bytes)
+    uint16_t dataLen;
+} g_pendingIcmpReply = {false};
+
+// ============================================================================
+// ICMP Raw Socket Receive Callback
+// ============================================================================
+
+static u8_t natIcmpRecvCallback(void* arg, struct raw_pcb* pcb,
+                                 struct pbuf* p, const ip_addr_t* addr) {
+    (void)arg;  // Use global context instead
+
+    // pbuf includes IP header - we need to skip it
+    if (p->tot_len < 28) {  // Min IP (20) + Min ICMP (8)
+        return 0;
+    }
+
+    uint8_t* ipData = (uint8_t*)p->payload;
+    uint8_t ipHeaderLen = (ipData[0] & 0x0F) * 4;
+
+    if (p->tot_len < ipHeaderLen + 8) {
+        return 0;
+    }
+
+    // Get ICMP header after IP header
+    struct icmp_echo_hdr* icmpHdr = (struct icmp_echo_hdr*)(ipData + ipHeaderLen);
+
+    // Only handle echo reply (type 0)
+    if (icmpHdr->type != 0) {
+        return 0;
+    }
+
+    uint16_t icmpId = ntohs(icmpHdr->id);
+    uint16_t icmpSeq = ntohs(icmpHdr->seqno);
+
+    // Get source IP from addr
+    const ip4_addr_t* ip4 = &addr->u_addr.ip4;
+    IPAddress srcIP((ip4->addr >> 0) & 0xFF, (ip4->addr >> 8) & 0xFF,
+                    (ip4->addr >> 16) & 0xFF, (ip4->addr >> 24) & 0xFF);
+
+    // Store reply info for deferred processing
+    if (!g_pendingIcmpReply.pending) {
+        g_pendingIcmpReply.pending = true;
+        g_pendingIcmpReply.srcIP = srcIP;
+        g_pendingIcmpReply.id = icmpId;
+        g_pendingIcmpReply.seq = icmpSeq;
+
+        // Copy ping payload (after 8-byte ICMP header)
+        uint16_t payloadLen = p->tot_len - ipHeaderLen - 8;
+        if (payloadLen > sizeof(g_pendingIcmpReply.data)) {
+            payloadLen = sizeof(g_pendingIcmpReply.data);
+        }
+        g_pendingIcmpReply.dataLen = payloadLen;
+        if (payloadLen > 0) {
+            pbuf_copy_partial(p, g_pendingIcmpReply.data, payloadLen, ipHeaderLen + 8);
+        }
+    }
+
+    return 1;  // Consume packet
+}
+
+// ============================================================================
+// Process Pending ICMP Reply (called from main loop)
+// ============================================================================
+
+void natProcessPendingIcmp(NatContext* ctx) {
+    if (!g_pendingIcmpReply.pending) {
+        return;
+    }
+
+    NAT_DEBUG_F("NAT: Processing ICMP reply from %d.%d.%d.%d id=%d seq=%d",
+                g_pendingIcmpReply.srcIP[0], g_pendingIcmpReply.srcIP[1],
+                g_pendingIcmpReply.srcIP[2], g_pendingIcmpReply.srcIP[3],
+                g_pendingIcmpReply.id, g_pendingIcmpReply.seq);
+
+    // Find matching NAT entry
+    NatIcmpEntry* entry = nullptr;
+    for (int i = 0; i < NAT_MAX_ICMP_SESSIONS; i++) {
+        if (ctx->icmpTable[i].active &&
+            ctx->icmpTable[i].dstIP == g_pendingIcmpReply.srcIP &&
+            ctx->icmpTable[i].id == g_pendingIcmpReply.id) {
+            entry = &ctx->icmpTable[i];
+            NAT_DEBUG_F("NAT: Matched ICMP entry %d", i);
+            break;
+        }
+    }
+
+    if (!entry) {
+        NAT_DEBUG("NAT: No matching ICMP entry for reply");
+        g_pendingIcmpReply.pending = false;
+        return;
+    }
+
+    // Update entry with sequence from reply
+    entry->sequence = g_pendingIcmpReply.seq;
+
+    // Send reply to SLIP client
+    natSendIcmpToClient(ctx, entry, ICMP_ECHO_REPLY, 0,
+                         g_pendingIcmpReply.data, g_pendingIcmpReply.dataLen);
+
+    NAT_DEBUG_F("NAT: Forwarded ping reply to client, %d bytes payload",
+                g_pendingIcmpReply.dataLen);
+    ctx->icmpPackets++;
+
+    // Mark entry inactive after reply
+    entry->active = false;
+
+    g_pendingIcmpReply.pending = false;
+}
+
+// ============================================================================
 // Process ICMP Packet (Echo Request/Reply)
 // ============================================================================
 
@@ -444,43 +679,180 @@ static void natProcessIcmp(NatContext* ctx, uint8_t* packet, uint16_t length,
 
     IcmpHeader* icmp = (IcmpHeader*)(packet + ipHeaderLen);
 
-    // We only handle Echo Request - respond locally
-    if (icmp->type == ICMP_ECHO_REQUEST) {
-        // Check if destination is our SLIP IP
-        IPAddress dstIP(ntohl(ip->dstIP));
-        if (dstIP == ctx->slipIP) {
-            // Respond to ping to gateway
-            uint16_t icmpLen = length - ipHeaderLen;
-
-            // Build reply packet
-            uint8_t reply[length];
-            memcpy(reply, packet, length);
-
-            IpHeader* replyIp = (IpHeader*)reply;
-            IcmpHeader* replyIcmp = (IcmpHeader*)(reply + ipHeaderLen);
-
-            // Swap source and destination IP
-            replyIp->srcIP = ip->dstIP;
-            replyIp->dstIP = ip->srcIP;
-
-            // Change to Echo Reply
-            replyIcmp->type = ICMP_ECHO_REPLY;
-            replyIcmp->code = 0;
-
-            // Recalculate ICMP checksum
-            replyIcmp->checksum = 0;
-            replyIcmp->checksum = htons(ipChecksum((uint8_t*)replyIcmp, icmpLen));
-
-            // Recalculate IP checksum
-            ipRecalcChecksum(replyIp);
-
-            // Send back via SLIP
-            natSendToClient(ctx, reply, length);
-            ctx->packetsFromInternet++;
-        }
-        // For pings to external hosts, we would need raw socket support
-        // which isn't available in Arduino WiFi library
+    // Only handle Echo Request (ping)
+    if (icmp->type != ICMP_ECHO_REQUEST) {
+        NAT_DEBUG_F("NAT: ICMP type %d dropped", icmp->type);
+        ctx->droppedPackets++;
+        return;
     }
+
+    // Construct IPs from network byte order (bytes are already in correct order)
+    uint8_t* dstBytes = (uint8_t*)&ip->dstIP;
+    uint8_t* srcBytes = (uint8_t*)&ip->srcIP;
+    IPAddress dstIP(dstBytes[0], dstBytes[1], dstBytes[2], dstBytes[3]);
+    IPAddress srcIP(srcBytes[0], srcBytes[1], srcBytes[2], srcBytes[3]);
+
+    NAT_DEBUG_F("NAT: ICMP echo request to %d.%d.%d.%d",
+                dstIP[0], dstIP[1], dstIP[2], dstIP[3]);
+
+    // Check if ping is for our gateway IP
+    if (dstIP == ctx->slipIP) {
+        // Respond directly
+        uint16_t icmpLen = length - ipHeaderLen;
+
+        // Swap IPs
+        uint32_t tmp = ip->srcIP;
+        ip->srcIP = ip->dstIP;
+        ip->dstIP = tmp;
+
+        // Change to echo reply
+        icmp->type = ICMP_ECHO_REPLY;
+        icmp->checksum = 0;
+        icmp->checksum = htons(ipChecksum((uint8_t*)icmp, icmpLen));
+
+        // Recalc IP checksum
+        ip->ttl = 64;
+        ipRecalcChecksum(ip);
+
+        // Send back
+        natSendToClient(ctx, packet, length);
+        ctx->packetsFromInternet++;
+        ctx->icmpPackets++;
+
+        NAT_DEBUG("NAT: Responded to gateway ping");
+        return;
+    }
+
+    // External ping - forward via ICMP NAT
+    if (!ctx->icmpPcb) {
+        NAT_DEBUG("NAT: No ICMP socket, dropping ping");
+        ctx->droppedPackets++;
+        return;
+    }
+
+    uint16_t icmpId = ntohs(icmp->id);
+    uint16_t icmpSeq = ntohs(icmp->sequence);
+
+    // Find or create ICMP NAT entry
+    NatIcmpEntry* entry = nullptr;
+    int freeSlot = -1;
+
+    for (int i = 0; i < NAT_MAX_ICMP_SESSIONS; i++) {
+        if (ctx->icmpTable[i].active &&
+            ctx->icmpTable[i].dstIP == dstIP &&
+            ctx->icmpTable[i].id == icmpId) {
+            entry = &ctx->icmpTable[i];
+            break;
+        }
+        if (!ctx->icmpTable[i].active && freeSlot < 0) {
+            freeSlot = i;
+        }
+    }
+
+    if (!entry && freeSlot >= 0) {
+        entry = &ctx->icmpTable[freeSlot];
+        entry->active = true;
+        entry->srcIP = srcIP;
+        entry->dstIP = dstIP;
+        entry->id = icmpId;
+        NAT_DEBUG_F("NAT: Created ICMP entry %d for ping to %d.%d.%d.%d",
+                    freeSlot, dstIP[0], dstIP[1], dstIP[2], dstIP[3]);
+    }
+
+    if (!entry) {
+        NAT_DEBUG("NAT: ICMP table full");
+        ctx->droppedPackets++;
+        return;
+    }
+
+    entry->sequence = icmpSeq;
+    entry->lastActivity = millis();
+
+    // Build ICMP packet to send via raw socket
+    uint16_t icmpLen = length - ipHeaderLen;
+    struct pbuf* p = pbuf_alloc(PBUF_IP, icmpLen, PBUF_RAM);
+    if (!p) {
+        NAT_DEBUG("NAT: Failed to allocate pbuf for ICMP");
+        ctx->droppedPackets++;
+        return;
+    }
+
+    // Copy ICMP data (header + payload)
+    memcpy(p->payload, icmp, icmpLen);
+
+    // Send via raw socket
+    ip_addr_t dest;
+    IP_ADDR4(&dest, dstIP[0], dstIP[1], dstIP[2], dstIP[3]);
+
+    err_t err = raw_sendto((struct raw_pcb*)ctx->icmpPcb, p, &dest);
+    pbuf_free(p);
+
+    if (err == ERR_OK) {
+        NAT_DEBUG_F("NAT: Forwarded ping to %d.%d.%d.%d id=%d seq=%d",
+                    dstIP[0], dstIP[1], dstIP[2], dstIP[3], icmpId, icmpSeq);
+        ctx->packetsToInternet++;
+        ctx->icmpPackets++;
+    } else {
+        NAT_DEBUG_F("NAT: Failed to send ICMP, err=%d", err);
+        ctx->droppedPackets++;
+    }
+}
+
+// ============================================================================
+// Send ICMP Packet to Client (Vintage Computer)
+// ============================================================================
+
+static void natSendIcmpToClient(NatContext* ctx, NatIcmpEntry* entry,
+                                 uint8_t type, uint8_t code,
+                                 uint8_t* data, uint16_t length) {
+    uint8_t packet[60 + 1472];  // Max IP + ICMP header + data
+    uint16_t ipHeaderLen = 20;
+    uint16_t icmpHeaderLen = 8;
+    uint16_t totalLen = ipHeaderLen + icmpHeaderLen + length;
+
+    if (totalLen > sizeof(packet)) {
+        return;
+    }
+
+    // Build IP header
+    IpHeader* ip = (IpHeader*)packet;
+    ip->versionIhl = 0x45;
+    ip->tos = 0;
+    ip->totalLength = htons(totalLen);
+    ip->id = htons(random(1, 65535));
+    ip->flagsFragment = htons(0x4000);
+    ip->ttl = 64;
+    ip->protocol = IP_PROTO_ICMP;
+    ip->checksum = 0;
+    // Construct IP addresses in network byte order from IPAddress bytes
+    ip->srcIP = entry->dstIP[0] | ((uint32_t)entry->dstIP[1] << 8) |
+                ((uint32_t)entry->dstIP[2] << 16) | ((uint32_t)entry->dstIP[3] << 24);
+    ip->dstIP = entry->srcIP[0] | ((uint32_t)entry->srcIP[1] << 8) |
+                ((uint32_t)entry->srcIP[2] << 16) | ((uint32_t)entry->srcIP[3] << 24);
+
+    // Build ICMP header
+    IcmpHeader* icmp = (IcmpHeader*)(packet + ipHeaderLen);
+    icmp->type = type;
+    icmp->code = code;
+    icmp->checksum = 0;
+    icmp->id = htons(entry->id);
+    icmp->sequence = htons(entry->sequence);
+
+    // Copy data
+    if (data && length > 0) {
+        memcpy(packet + ipHeaderLen + icmpHeaderLen, data, length);
+    }
+
+    // Calculate ICMP checksum
+    uint16_t icmpTotalLen = icmpHeaderLen + length;
+    icmp->checksum = htons(ipChecksum((uint8_t*)icmp, icmpTotalLen));
+
+    // Calculate IP checksum
+    ipRecalcChecksum(ip);
+
+    // Send via SLIP
+    natSendToClient(ctx, packet, totalLen);
+    ctx->packetsFromInternet++;
 }
 
 // ============================================================================
@@ -526,12 +898,14 @@ static NatTcpEntry* natCreateTcpEntry(NatContext* ctx, IPAddress srcIP,
             entry->client = nullptr;
             entry->clientSeq = 0;
             entry->clientAck = 0;
-            entry->serverSeq = 1000;  // Initial server sequence
+            entry->serverSeq = random(1, 0x7FFFFFFF);  // Random initial sequence
             entry->serverAck = 0;
             entry->rxBuffer = nullptr;
             entry->rxBufferLen = 0;
             entry->rxBufferSize = 0;
             entry->lastActivity = millis();
+            entry->lastKeepalive = millis();
+            entry->lastServerData = millis();
             entry->created = millis();
             return entry;
         }
@@ -589,15 +963,54 @@ int natPollConnections(NatContext* ctx) {
         NatTcpEntry* entry = &ctx->tcpTable[i];
         if (!entry->active || !entry->client) continue;
 
-        // Check for incoming data
-        while (entry->client->available()) {
-            uint8_t buf[512];
-            int len = entry->client->read(buf, sizeof(buf));
-            if (len > 0) {
-                natSendTcpToClient(ctx, entry, buf, len, TCP_FLAG_PSH | TCP_FLAG_ACK);
-                entry->serverSeq += len;
-                packetsSent++;
-                ctx->packetsFromInternet++;
+        // Check for incoming data from remote server
+        // Uses strict stop-and-wait flow control for reliability on vintage serial links
+        int avail = entry->client->available();
+        if (avail > 0 && entry->state == NAT_TCP_ESTABLISHED) {
+            // Calculate bytes in flight (sent but not yet ACKed by client)
+            uint32_t inFlight = entry->serverSeq - entry->serverAck;
+
+            // STRICT: Only send if NO data is in flight (stop-and-wait)
+            if (inFlight == 0) {
+                // 1000 byte segments - balance between throughput and reliability
+                uint32_t canSend = 1000;
+                if (canSend > (uint32_t)avail) canSend = avail;
+
+                uint8_t buffer[1000];
+                int len = entry->client->read(buffer, canSend);
+                if (len > 0) {
+                    NAT_DEBUG_F("NAT: TCP[%d] sending %d bytes, seq=%u", i, len, entry->serverSeq);
+                    natSendTcpToClient(ctx, entry, buffer, len, TCP_FLAG_PSH | TCP_FLAG_ACK);
+                    entry->lastActivity = millis();
+                    entry->lastServerData = millis();
+                    packetsSent++;
+                }
+            } else {
+                // Data in flight - waiting for ACK from client
+                unsigned long now = millis();
+                unsigned long waitTime = now - entry->lastActivity;
+
+                // Periodic debug every 5 seconds while waiting
+                static unsigned long lastWaitDebug = 0;
+                if (now - lastWaitDebug > 5000) {
+                    int clientAvail = entry->client ? entry->client->available() : -1;
+                    bool clientConn = entry->client ? entry->client->connected() : false;
+                    NAT_DEBUG_F("NAT: TCP[%d] WAITING: inFlight=%u, wait=%lums, avail=%d, conn=%d",
+                                i, inFlight, waitTime, clientAvail, clientConn);
+                    lastWaitDebug = now;
+                }
+
+                // Stall detection - close if no ACKs for too long
+                if (waitTime > NAT_TCP_STALL_TIMEOUT_MS) {
+                    NAT_DEBUG_F("NAT: TCP[%d] stalled (no ACK for %lums), closing", i, waitTime);
+                    if (entry->client) {
+                        entry->client->stop();
+                        delete entry->client;
+                        entry->client = nullptr;
+                    }
+                    entry->active = false;
+                    continue;
+                }
             }
         }
 
@@ -605,7 +1018,28 @@ int natPollConnections(NatContext* ctx) {
         if (!entry->client->connected() && entry->state == NAT_TCP_ESTABLISHED) {
             // Send FIN to client
             natSendTcpToClient(ctx, entry, nullptr, 0, TCP_FLAG_FIN | TCP_FLAG_ACK);
-            entry->state = NAT_TCP_FIN_WAIT;
+            entry->state = NAT_TCP_CLOSING;
+        }
+
+        // TCP keepalive - send periodic ACK to keep connection alive
+        if (entry->state == NAT_TCP_ESTABLISHED) {
+            unsigned long now = millis();
+            if (now - entry->lastKeepalive > NAT_TCP_KEEPALIVE_MS) {
+                NAT_DEBUG_F("NAT: TCP[%d] sending keepalive", i);
+                natSendTcpToClient(ctx, entry, nullptr, 0, TCP_FLAG_ACK);
+                entry->lastKeepalive = now;
+                entry->lastActivity = now;
+            }
+
+            // Check for server silence - warn if no data from server for 5+ minutes
+            unsigned long serverSilence = now - entry->lastServerData;
+            if (serverSilence > 300000) {
+                static unsigned long lastSilenceWarn = 0;
+                if (now - lastSilenceWarn > 60000) {
+                    NAT_DEBUG_F("NAT: TCP[%d] server silent for %lu seconds", i, serverSilence / 1000);
+                    lastSilenceWarn = now;
+                }
+            }
         }
     }
 
@@ -613,27 +1047,46 @@ int natPollConnections(NatContext* ctx) {
     if (ctx->udpSocketBound) {
         int packetSize = ctx->udpSocket.parsePacket();
         if (packetSize > 0) {
-            uint8_t buf[1500];
+            uint8_t buf[1472];
             int len = ctx->udpSocket.read(buf, sizeof(buf));
             if (len > 0) {
                 IPAddress remoteIP = ctx->udpSocket.remoteIP();
                 uint16_t remotePort = ctx->udpSocket.remotePort();
 
+                NAT_DEBUG_F("NAT: UDP response from %d.%d.%d.%d:%d len=%d",
+                            remoteIP[0], remoteIP[1], remoteIP[2], remoteIP[3],
+                            remotePort, len);
+
                 // Find matching UDP session
+                bool found = false;
                 for (int i = 0; i < NAT_MAX_UDP_SESSIONS; i++) {
                     NatUdpEntry* entry = &ctx->udpTable[i];
                     if (entry->active &&
                         entry->dstIP == remoteIP &&
                         entry->dstPort == remotePort) {
+                        NAT_DEBUG_F("NAT: Matched UDP entry %d", i);
                         natSendUdpToClient(ctx, entry, buf, len);
                         packetsSent++;
-                        ctx->packetsFromInternet++;
+                        found = true;
+                        // For DNS (port 53), mark entry inactive after response
+                        if (entry->dstPort == 53) {
+                            entry->active = false;
+                            NAT_DEBUG_F("NAT: Released DNS UDP entry %d", i);
+                        } else {
+                            entry->lastActivity = millis();
+                        }
                         break;
                     }
+                }
+                if (!found) {
+                    NAT_DEBUG("NAT: No matching UDP entry for response");
                 }
             }
         }
     }
+
+    // Process any pending ICMP replies
+    natProcessPendingIcmp(ctx);
 
     return packetsSent;
 }
@@ -653,9 +1106,12 @@ void natCleanupExpired(NatContext* ctx) {
         unsigned long timeout = NAT_TCP_TIMEOUT_MS;
         if (entry->state == NAT_TCP_SYN_SENT) {
             timeout = NAT_TCP_SYN_TIMEOUT_MS;
+        } else if (entry->state == NAT_TCP_CLOSING || entry->state == NAT_TCP_FIN_WAIT) {
+            timeout = 10000;  // 10 seconds for closing
         }
 
         if (now - entry->lastActivity > timeout) {
+            NAT_DEBUG_F("NAT: Closing expired TCP %d", i);
             if (entry->client) {
                 entry->client->stop();
                 delete entry->client;
@@ -673,6 +1129,16 @@ void natCleanupExpired(NatContext* ctx) {
     for (int i = 0; i < NAT_MAX_UDP_SESSIONS; i++) {
         NatUdpEntry* entry = &ctx->udpTable[i];
         if (entry->active && now - entry->lastActivity > NAT_UDP_TIMEOUT_MS) {
+            NAT_DEBUG_F("NAT: Closing expired UDP %d", i);
+            entry->active = false;
+        }
+    }
+
+    // Clean ICMP sessions
+    for (int i = 0; i < NAT_MAX_ICMP_SESSIONS; i++) {
+        NatIcmpEntry* entry = &ctx->icmpTable[i];
+        if (entry->active && now - entry->lastActivity > NAT_ICMP_TIMEOUT_MS) {
+            NAT_DEBUG_F("NAT: Closing expired ICMP %d", i);
             entry->active = false;
         }
     }
@@ -685,8 +1151,15 @@ void natCleanupExpired(NatContext* ctx) {
 static void natSendTcpToClient(NatContext* ctx, NatTcpEntry* entry,
                                 uint8_t* data, uint16_t length, uint8_t flags) {
     // Build IP + TCP packet
-    uint16_t totalLen = 20 + 20 + length;  // IP header + TCP header + data
-    uint8_t packet[totalLen];
+    uint16_t ipHeaderLen = 20;
+    uint16_t tcpHeaderLen = 20;
+    uint16_t totalLen = ipHeaderLen + tcpHeaderLen + length;
+    uint8_t packet[60 + 1460];  // Max IP header + TCP header + data
+
+    if (totalLen > sizeof(packet)) {
+        return;
+    }
+
     memset(packet, 0, totalLen);
 
     // Build IP header
@@ -694,20 +1167,22 @@ static void natSendTcpToClient(NatContext* ctx, NatTcpEntry* entry,
     ip->versionIhl = 0x45;  // IPv4, 5 words header
     ip->tos = 0;
     ip->totalLength = htons(totalLen);
-    ip->id = htons(rand() & 0xFFFF);
+    ip->id = htons(random(1, 65535));
     ip->flagsFragment = htons(0x4000);  // Don't fragment
     ip->ttl = 64;
     ip->protocol = IP_PROTO_TCP;
-    ip->srcIP = htonl((uint32_t)entry->dstIP);
-    ip->dstIP = htonl((uint32_t)entry->srcIP);
-    ipRecalcChecksum(ip);
+    // Construct IP addresses in network byte order from IPAddress bytes
+    ip->srcIP = entry->dstIP[0] | ((uint32_t)entry->dstIP[1] << 8) |
+                ((uint32_t)entry->dstIP[2] << 16) | ((uint32_t)entry->dstIP[3] << 24);
+    ip->dstIP = entry->srcIP[0] | ((uint32_t)entry->srcIP[1] << 8) |
+                ((uint32_t)entry->srcIP[2] << 16) | ((uint32_t)entry->srcIP[3] << 24);
 
     // Build TCP header
-    TcpHeader* tcp = (TcpHeader*)(packet + 20);
+    TcpHeader* tcp = (TcpHeader*)(packet + ipHeaderLen);
     tcp->srcPort = htons(entry->dstPort);
     tcp->dstPort = htons(entry->srcPort);
     tcp->seqNum = htonl(entry->serverSeq);
-    tcp->ackNum = htonl(entry->clientSeq + 1);
+    tcp->ackNum = htonl(entry->clientSeq);  // clientSeq is already "next expected byte"
     tcp->dataOffset = 0x50;  // 5 words header
     tcp->flags = flags;
     tcp->window = htons(8192);
@@ -715,15 +1190,28 @@ static void natSendTcpToClient(NatContext* ctx, NatTcpEntry* entry,
 
     // Copy data
     if (data && length > 0) {
-        memcpy(packet + 40, data, length);
+        memcpy(packet + ipHeaderLen + tcpHeaderLen, data, length);
     }
 
-    // Calculate TCP checksum
+    // Update sequence for next packet
+    if (flags & TCP_FLAG_SYN) {
+        entry->serverSeq++;
+    }
+    if (flags & TCP_FLAG_FIN) {
+        entry->serverSeq++;
+    }
+    if (length > 0) {
+        entry->serverSeq += length;
+    }
+
+    // Calculate checksums
+    ipRecalcChecksum(ip);
     tcp->checksum = 0;
-    tcp->checksum = htons(tcpUdpChecksum(ip, (uint8_t*)tcp, 20 + length));
+    tcp->checksum = htons(tcpUdpChecksum(ip, (uint8_t*)tcp, tcpHeaderLen + length));
 
     // Send via SLIP
     natSendToClient(ctx, packet, totalLen);
+    ctx->packetsFromInternet++;
 }
 
 // ============================================================================
@@ -742,12 +1230,15 @@ static void natSendUdpToClient(NatContext* ctx, NatUdpEntry* entry,
     ip->versionIhl = 0x45;
     ip->tos = 0;
     ip->totalLength = htons(totalLen);
-    ip->id = htons(rand() & 0xFFFF);
+    ip->id = htons(random(1, 65535));
     ip->flagsFragment = htons(0x4000);
     ip->ttl = 64;
     ip->protocol = IP_PROTO_UDP;
-    ip->srcIP = htonl((uint32_t)entry->dstIP);
-    ip->dstIP = htonl((uint32_t)entry->srcIP);
+    // Construct IP addresses in network byte order from IPAddress bytes
+    ip->srcIP = entry->dstIP[0] | ((uint32_t)entry->dstIP[1] << 8) |
+                ((uint32_t)entry->dstIP[2] << 16) | ((uint32_t)entry->dstIP[3] << 24);
+    ip->dstIP = entry->srcIP[0] | ((uint32_t)entry->srcIP[1] << 8) |
+                ((uint32_t)entry->srcIP[2] << 16) | ((uint32_t)entry->srcIP[3] << 24);
     ipRecalcChecksum(ip);
 
     // Build UDP header
