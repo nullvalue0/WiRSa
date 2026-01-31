@@ -30,12 +30,13 @@ If you prefer to save yourself some time, I have some units (fully assembled or 
 ### Operating Modes
 
 1. **MODEM Mode** - Hayes-compatible AT command modem emulation for telnet/BBS connectivity
-2. **File Transfer** - Binary file transfer directly from SD card via XModem, YModem, and ZModem protocols
-3. **Text Playback** - Display text files from SD card through the serial port
-4. **PPP Gateway** - Point-to-Point Protocol gateway for TCP/IP networking
-5. **SLIP Gateway** - Serial Line Internet Protocol gateway
-6. **Utilities** - Diagnostics and troubleshooting tools including signal monitoring and loopback testing
-7. **Config** - Settings for baud rate, serial configuration, display orientation, and more
+2. **Telnet Server** - Built-in telnet server allows for remote terminal access
+3. **File Transfer** - Binary file transfer directly from SD card via XModem, YModem, and ZModem protocols
+4. **Text Playback** - Display text files from SD card through the serial port
+5. **PPP Gateway** - Point-to-Point Protocol gateway for TCP/IP networking
+6. **SLIP Gateway** - Serial Line Internet Protocol gateway
+7. **Utilities** - Diagnostics and troubleshooting tools including signal monitoring and loopback testing
+8. **Config** - Settings for baud rate, serial configuration, display orientation, and more
 
 ### Software Features
 
@@ -217,7 +218,7 @@ AT$PPPFWDDEL=0            - Remove forward at index 0
 ### Setting Up SLIP Under DOS
 
 **Requirements:**
-- DOS 6.x or later (or FreeDOS)
+- MS-DOS, DR-DOS, FreeDOS, etc
 - A SLIP packet driver (ETHERSLIP, SLIPPER, or CSLIPPER)
 - TCP/IP applications (mTCP suite, Arachne or MicroWeb browser, NCSA Telnet, etc.)
 
