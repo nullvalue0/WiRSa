@@ -1,6 +1,6 @@
 # RetroDisks WiRSa v3 - WiFi RS232 Serial Modem Adapter
 
-The WiRSa v3 is a WiFi-to-RS232 serial adapter designed to get vintage computers connected to the internet (telnet or http). Use it to connect your vintage computer to a telnet BBS or other internet resources.. It allows vintage computers to connect to modern networks via WiFi, supporting telnet BBS connectivity, file transfers, and network gateway functionality. This project differs from other Wifi Serial adapters in that it adds a micro-SD card module for reading and writing data. The intended use case is for people who have a vintage computer but have no ability (or desire) to create floppies, and doesn't want to modify the computer (by installing a permanent floppy emulation solution something like a Gotek). Includes a 128x64 display, 4 navigation buttons, ESP32 processor, battery charging circuit and power switch, and upgrades the RS232 level shifting to a MAX3242 device which is capable of driving all serial lines.
+The WiRSa v3 is a WiFi-to-RS232 serial adapter designed for legacy computing systems. It allows vintage computers to connect to modern networks via WiFi, supporting telnet BBS connectivity, file transfers, and network gateway functionality.
 
 ![WiRSa Menu Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/2024-12-23T05_33_06.740Z-IMG_20241222_222852_2~2.jpg)
 
@@ -32,11 +32,10 @@ If you prefer to save yourself some time, I have some units (fully assembled or 
 1. **MODEM Mode** - Hayes-compatible AT command modem emulation for telnet/BBS connectivity
 2. **File Transfer** - Binary file transfer directly from SD card via XModem, YModem, and ZModem protocols
 3. **Text Playback** - Display text files from SD card through the serial port
-4. **PPP Gateway** - Point-to-Point Protocol gateway/server for TCP/IP networking
-5. **SLIP Gateway** - Serial Line Internet Protocol gateway/server for TCP/IP networking
-6. **Telnet Server** - Remote into your vintage computer or serial device over telnet
-7. **Utilities** - Diagnostics and troubleshooting tools including signal monitoring and loopback testing
-8. **Config** - Settings for baud rate, serial configuration, display orientation, and more
+4. **PPP Gateway** - Point-to-Point Protocol gateway for TCP/IP networking
+5. **SLIP Gateway** - Serial Line Internet Protocol gateway
+6. **Utilities** - Diagnostics and troubleshooting tools including signal monitoring and loopback testing
+7. **Config** - Settings for baud rate, serial configuration, display orientation, and more
 
 ### Software Features
 
@@ -124,13 +123,358 @@ To transfer files:
 ![WiRSa PCB Action](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/2024-12-24T02_40_23.319Z-PXL_20241222_223612533~2.jpg)
 
 
-## SLIP / PPP Gateway Mode
+## SLIP / PPP Gateway Modes
 
-The SLIP/PPP Gateway modes enables TCP/IP networking for vintage computers with proper support and TCP stack. Tested with Windows 98 Dial-up Networking and ETHERSL/mTCP under DOS. 
+The WiRSa provides full TCP/IP networking capabilities for vintage computers through two standard protocols: **SLIP** (Serial Line Internet Protocol) and **PPP** (Point-to-Point Protocol). These modes turn the WiRSa into a dial-up internet gateway, allowing retro systems to browse the web, use email clients, FTP, and access other network services.
 
-You can activate these gateway modes directly from their menu (over serial or on OLED display), or by dialing a special number. No need to flash a different firmware!
-**Call '777' or 'PPP'** to enable the PPP gateway. PPP automatically assigns an IP address, so leave DHCP selected in your settings. 
-**Call '7547' or 'SLIP'** to enable the SLIP gateway. SLIP requires you to manually specify your IP address. Try using Gateway: 192.168.7.1, Client: 192.168.7.2, DNS Server: 8.8.8.8. Remember to set these values both in the WiRSa SLIP menu and in your networking configurating on the computer.
+### How It Works
+
+Both modes operate as NAT (Network Address Translation) gateways:
+1. The vintage computer connects via the serial port
+2. The WiRSa performs NAT translation between the serial link and WiFi
+3. Outbound traffic is routed to the internet via the ESP32's WiFi connection
+4. The vintage computer appears to have full internet access
+
+### SLIP Mode
+
+SLIP is a simpler, older protocol with less overhead. It works well with:
+- **DOS** with packet drivers (ETHERSLIP, SLIPPER, etc.)
+- **Early Windows 3.x** with Trumpet Winsock
+- **Classic Mac OS** with MacSLIP or InterSLIP
+- **Linux** with `slattach`
+
+**Default Configuration:**
+- Gateway IP: 192.168.7.1 (WiRSa)
+- Client IP: 192.168.7.2 (vintage computer)
+- DNS: 8.8.8.8
+
+### PPP Mode
+
+PPP is more robust with built-in negotiation, authentication support, and error detection. It's the standard for:
+- **Windows 95/98/ME** Dial-Up Networking
+- **Windows 3.11** with Microsoft DUN
+- **Mac OS 8/9** with PPP/Remote Access
+- **Linux** with `pppd`
+
+**Default Configuration:**
+- Gateway IP: 192.168.8.1 (WiRSa)
+- Client IP: 192.168.8.2 (assigned to client)
+- Primary DNS: 8.8.8.8
+- Secondary DNS: 8.8.4.4
+
+### Entering SLIP/PPP Mode
+
+**From the WiRSa Menu:**
+1. Navigate to "PPP Gateway" or "SLIP Gateway" from the main menu
+2. Select "Start Gateway"
+
+**Using AT Dial Commands (from Modem Mode):**
+```
+ATDT SLIP      - Enter SLIP mode
+ATDT 7547      - Enter SLIP mode (phone keypad for "SLIP")
+
+ATDT PPP       - Enter PPP mode
+ATDT 777       - Enter PPP mode (phone keypad for "PPP")
+```
+
+**Using AT Commands:**
+```
+AT$SLIP        - Enter SLIP mode directly
+AT$PPP         - Enter PPP mode directly
+```
+
+### Port Forwarding
+
+Port forwarding allows incoming connections from the internet to reach services running on your vintage computer. This is useful for:
+
+- **Hosting a BBS** - Run a BBS on your vintage computer accessible from the internet
+- **FTP Server** - Share files from your retro machine
+- **Web Server** - Host a vintage web server (Windows 95 Personal Web Server, etc.)
+- **Game Servers** - Host multiplayer games on classic systems
+- **SSH/Telnet Access** - Remote into your vintage computer
+
+**Configuring Port Forwards:**
+
+From the menu:
+1. Enter SLIP or PPP Gateway menu
+2. Select "Port Forwards"
+3. Choose "Add Forward"
+4. Enter protocol (TCP/UDP), external port, internal IP, and internal port
+
+Using AT commands:
+```
+AT$SLIPFWD=TCP,80,80      - Forward TCP port 80 to client port 80
+AT$SLIPFWD=UDP,53,53      - Forward UDP port 53 (DNS)
+AT$SLIPFWDDEL=0           - Remove forward at index 0
+
+AT$PPPFWD=TCP,23,23       - Forward TCP port 23 (telnet)
+AT$PPPFWD=TCP,21,21       - Forward TCP port 21 (FTP)
+AT$PPPFWDDEL=0            - Remove forward at index 0
+```
+
+**Note:** Port forwards are shared between SLIP and PPP modes and persist across reboots.
+
+### Setting Up SLIP Under DOS
+
+**Requirements:**
+- DOS 6.x or later (or FreeDOS)
+- A SLIP packet driver (ETHERSLIP, SLIPPER, or CSLIPPER)
+- TCP/IP applications (NCSA Telnet, Arachne web browser, mTCP suite, etc.)
+
+**Step 1: Configure WiRSa**
+```
+AT$SSID=YourWiFiNetwork
+AT$PASS=YourPassword
+AT&W
+```
+
+**Step 2: Install Packet Driver**
+
+Create a batch file (e.g., `SLIP.BAT`):
+```batch
+@echo off
+REM Load SLIP packet driver on COM1 at 115200 baud
+ETHERSL 0x60 4 0x3F8 115200
+REM Or for COM2: ETHERSL 0x60 3 0x2F8 115200
+```
+
+**Step 3: Configure TCP/IP Stack**
+
+For mTCP, create `MTCP.CFG`:
+```
+PACKETINT 0x60
+IPADDR 192.168.7.2
+NETMASK 255.255.255.0
+GATEWAY 192.168.7.1
+NAMESERVER 8.8.8.8
+```
+
+Set environment variable:
+```batch
+SET MTCPCFG=C:\MTCP\MTCP.CFG
+```
+
+**Step 4: Connect**
+
+Use a terminal program to dial the WiRSa:
+```
+ATDT SLIP
+```
+
+Or create a script that sends the dial command and starts the packet driver.
+
+**Step 5: Test Connection**
+```
+PING 8.8.8.8
+TELNET bbs.example.com
+```
+
+### Setting Up PPP Under Windows 95/98 Dial-Up Networking
+
+**Step 1: Create a New Connection**
+1. Open "My Computer" → "Dial-Up Networking"
+2. Click "Make New Connection"
+3. Name it "WiRSa Internet" (or any name)
+4. Select your serial port modem (or "Standard Modem" on the COM port)
+5. For phone number, enter: `PPP` (or `777`)
+
+**Step 2: Configure the Connection**
+1. Right-click the new connection → "Properties"
+2. **General tab:** Ensure correct modem/port is selected
+3. **Server Types tab:**
+   - Type of Dial-Up Server: "PPP: Internet, Windows NT Server, Windows 98"
+   - Uncheck "Log on to network" (unless needed)
+   - Check "Enable software compression" (optional)
+   - Check "TCP/IP" under Allowed network protocols
+   - Uncheck NetBEUI and IPX/SPX unless needed
+4. Click "TCP/IP Settings":
+   - Select "Server assigned IP address"
+   - Select "Server assigned name server addresses"
+   - Click OK
+
+**Step 3: Modem Settings**
+1. Go to Control Panel → Modems → Properties
+2. Set maximum speed to match WiRSa baud rate (115200 recommended)
+3. Under "Connection" tab, set 8 data bits, No parity, 1 stop bit
+
+**Step 4: Connect**
+1. Double-click the connection
+2. Leave username/password blank (or enter any values - WiRSa ignores auth)
+3. Click "Connect"
+4. The WiRSa will respond "CONNECT PPP" and negotiate the link
+
+**Step 5: Verify Connection**
+- Open a command prompt: `ping 8.8.8.8`
+- Open Internet Explorer and browse!
+
+### Setting Up PPP Under Windows 3.11
+
+**Requirements:**
+- Windows 3.11 for Workgroups
+- Microsoft TCP/IP-32 or Trumpet Winsock
+- Dial-Up Networking 1.0 for Windows 3.11
+
+**Step 1: Install TCP/IP-32**
+1. Run Network Setup
+2. Add "Microsoft TCP/IP-32"
+3. Configure with DHCP or manual IP (the WiRSa will assign IPs)
+
+**Step 2: Configure RAS (Remote Access Service)**
+1. Install RAS if not present
+2. Add your modem on the appropriate COM port
+3. Create a new phonebook entry with phone number "PPP" or "777"
+
+**Step 3: Connect**
+1. Open Remote Access
+2. Select your WiRSa entry
+3. Click "Dial"
+
+### Configuration AT Commands
+
+**SLIP Configuration:**
+| Command | Description |
+|---------|-------------|
+| `AT$SLIP` | Enter SLIP gateway mode |
+| `AT$SLIPIP=x.x.x.x` | Set gateway IP address |
+| `AT$SLIPCLIENT=x.x.x.x` | Set client IP address |
+| `AT$SLIPDNS=x.x.x.x` | Set DNS server |
+| `AT$SLIPSHOW` | Show current SLIP configuration |
+| `AT$SLIPSTAT` | Show SLIP statistics |
+| `AT$SLIPFWD=proto,ext,int` | Add port forward |
+| `AT$SLIPFWDDEL=index` | Remove port forward |
+
+**PPP Configuration:**
+| Command | Description |
+|---------|-------------|
+| `AT$PPP` | Enter PPP gateway mode |
+| `AT$PPPGW=x.x.x.x` | Set gateway IP address |
+| `AT$PPPPOOL=x.x.x.x` | Set client pool start IP |
+| `AT$PPPDNS=x.x.x.x` | Set primary DNS server |
+| `AT$PPPDNS2=x.x.x.x` | Set secondary DNS server |
+| `AT$PPPSHOW` | Show current PPP configuration |
+| `AT$PPPSTAT` | Show PPP statistics |
+| `AT$PPPFWD=proto,ext,int` | Add port forward |
+| `AT$PPPFWDDEL=index` | Remove port forward |
+| `AT$PPPFWDLIST` | List all port forwards |
+
+### Exiting SLIP/PPP Mode
+
+- Press the **BACK button** on the WiRSa
+- Send `+++` escape sequence (USB serial only in SLIP mode)
+- Disconnect from the client side (PPP will detect link termination)
+
+## Telnet Server Mode
+
+The WiRSa includes a built-in Telnet server that allows remote access to devices connected via the serial port. This is useful for:
+
+- **Vintage terminals and computers** - Access systems that originally connected to serial terminals (mainframes, minicomputers, Unix systems)
+- **Serial console access** - Remotely manage routers, switches, or embedded devices with serial management ports
+- **Headless systems** - Access single-board computers or systems without displays
+- **BBS hosting** - Run a BBS on a vintage computer and accept telnet connections
+
+### How It Works
+
+1. The WiRSa listens for incoming TCP connections on a configurable port (default: 23)
+2. When a connection is made, data is bridged bidirectionally between the telnet client and the serial port
+3. The remote user interacts with whatever is connected to the WiRSa's serial port as if they were locally connected
+
+### Configuration
+
+**Set the listening port:**
+```
+AT$SP=23        - Set server port to 23 (default telnet port)
+AT$SP=2323      - Use alternate port 2323
+AT$SP?          - Query current port
+```
+
+**Configure auto-answer:**
+```
+ATS0=1          - Enable auto-answer (automatically connect incoming calls)
+ATS0=0          - Disable auto-answer (ring and wait for manual answer)
+ATS0?           - Query current setting
+```
+
+**Telnet protocol handling:**
+```
+ATNET1          - Enable telnet IAC sequence handling (recommended for telnet clients)
+ATNET0          - Disable telnet handling (raw TCP mode)
+ATNET?          - Query current setting
+```
+
+### Connecting to the WiRSa
+
+From any computer on the same network:
+```bash
+telnet <wirsa-ip-address> 23
+```
+
+Or with a custom port:
+```bash
+telnet <wirsa-ip-address> 2323
+```
+
+### Console Mode vs Call Mode
+
+The WiRSa supports two types of incoming connections:
+
+**Console Connection (First Connection):**
+- The first telnet connection becomes a "console" session
+- Stays in AT command mode - you can type AT commands
+- Use `ATDT <host:port>` to dial out to BBSes
+- Full modem emulation available
+
+**Call Connection (With Auto-Answer):**
+- When `ATS0=1` is set, subsequent connections bridge directly to serial
+- Data passes transparently between telnet and serial
+- Use `+++` to escape back to command mode
+- Use `ATH` to hang up
+
+### Example: Remote Terminal Access
+
+**Scenario:** You have a vintage Unix system with a serial console, and you want to access it remotely via telnet.
+
+1. Connect the WiRSa to the Unix system's serial port
+2. Configure WiRSa to match the system's serial settings:
+   ```
+   AT$SB=9600      - Set baud rate (match your system)
+   ATS0=1          - Enable auto-answer
+   ATNET1          - Enable telnet handling
+   AT&W            - Save settings
+   ```
+3. From a remote computer, telnet to the WiRSa's IP address
+4. You'll be connected directly to the Unix system's serial console
+
+### Example: Hosting a BBS
+
+**Scenario:** Run a BBS on a vintage computer and accept incoming telnet connections.
+
+1. Connect WiRSa to the vintage computer running BBS software
+2. Configure WiRSa:
+   ```
+   AT$SP=23        - Listen on port 23
+   ATS0=1          - Auto-answer incoming connections
+   ATNET1          - Handle telnet protocol
+   AT&W            - Save settings
+   ```
+3. Configure your router to forward port 23 to the WiRSa's IP address
+4. Users can now telnet to your public IP to access the BBS
+
+### Manual Answer Mode
+
+When auto-answer is disabled (`ATS0=0`), incoming connections trigger a "RING" message:
+
+```
+RING
+RING
+RING
+```
+
+To answer manually, type:
+```
+ATA             - Answer the incoming call
+```
+
+This is useful when you want to screen incoming connections or when the connected device needs preparation before accepting a connection.
 
 ## Diagnostics
 
