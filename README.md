@@ -219,7 +219,7 @@ AT$PPPFWDDEL=0            - Remove forward at index 0
 **Requirements:**
 - DOS 6.x or later (or FreeDOS)
 - A SLIP packet driver (ETHERSLIP, SLIPPER, or CSLIPPER)
-- TCP/IP applications (NCSA Telnet, Arachne web browser, mTCP suite, etc.)
+- TCP/IP applications (mTCP suite, Arachne or MicroWeb browser, NCSA Telnet, etc.)
 
 **Step 1: Configure WiRSa**
 ```
@@ -256,12 +256,11 @@ SET MTCPCFG=C:\MTCP\MTCP.CFG
 
 **Step 4: Connect**
 
-Use a terminal program to dial the WiRSa:
+On the WiRSa, start SLIP Gateway by enabling from the buttons/screen menu, from the serial menu (exit terminal after Starting Gateway, it starts immediately), or by dialing
 ```
 ATDT SLIP
 ```
 
-Or create a script that sends the dial command and starts the packet driver.
 
 **Step 5: Test Connection**
 ```
@@ -294,7 +293,7 @@ TELNET bbs.example.com
 
 **Step 3: Modem Settings**
 1. Go to Control Panel → Modems → Properties
-2. Set maximum speed to match WiRSa baud rate (115200 recommended)
+2. Set maximum speed to match WiRSa baud rate (115200 recommended, plus Flow Control enabled [AT&K1])
 3. Under "Connection" tab, set 8 data bits, No parity, 1 stop bit
 
 **Step 4: Connect**
