@@ -40,6 +40,9 @@
  **************************************************************************/
 
  /*
+ changes 3.06
+ - added port forwarding to SLIP/PPP modes
+ 
  changes 3.05
  - added SLIP mode/feature
  - added greatly improved web config
@@ -260,7 +263,7 @@ const uint32_t crc32tab[256] PROGMEM = {
 
 
 // Global variables
-String build = "v3.05";
+String build = "v3.06";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call

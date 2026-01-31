@@ -48,10 +48,8 @@ struct SlipModeContext {
 #define SLIP_CLIENT_IP_ADDRESS  804   // 4 bytes - Client IP
 #define SLIP_SUBNET_ADDRESS     808   // 4 bytes - Subnet mask
 #define SLIP_DNS_ADDRESS        812   // 4 bytes - DNS server
-#define SLIP_PORTFWD_BASE       816   // Port forwards start here
-#define SLIP_PORTFWD_SIZE       8     // 8 bytes per entry (active, proto, extPort, intPort, intIP)
-#define SLIP_PORTFWD_COUNT      8     // Max 8 port forwards
-#define SLIP_EEPROM_END         880   // End of SLIP EEPROM area
+#define SLIP_EEPROM_END         816   // End of SLIP EEPROM area
+// Note: Port forwards are stored in a shared location (PORTFWD_BASE in globals.h)
 
 // ============================================================================
 // Function Declarations - Mode Interface

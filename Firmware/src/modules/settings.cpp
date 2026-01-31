@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "globals.h"
 #include <EEPROM.h>
 
 // Pin definitions and addresses (from globals.h concepts)
@@ -155,8 +156,8 @@ void defaultEEPROM() {
   EEPROM.write(813, 8);
   EEPROM.write(814, 8);
   EEPROM.write(815, 8);
-  // Clear port forward entries
-  for (int i = 816; i < 880; i++) {
+  // Clear port forward entries (shared by SLIP and PPP)
+  for (int i = PORTFWD_BASE; i < PORTFWD_BASE + (PORTFWD_COUNT * PORTFWD_SIZE); i++) {
     EEPROM.write(i, 0);
   }
 

@@ -274,8 +274,14 @@ void natCleanupExpired(NatContext* ctx);
 
 // Port forwarding management
 int natAddPortForward(NatContext* ctx, uint8_t proto, uint16_t extPort,
-                      IPAddress intIP, uint16_t intPort);
+                      IPAddress intIP, uint16_t intPort, bool startServer = false);
 void natRemovePortForward(NatContext* ctx, int index);
+void natStartPortForwardServers(NatContext* ctx);
+void natStopPortForwardServers(NatContext* ctx);
+
+// Port forward persistence (EEPROM)
+void savePortForwards(NatContext* ctx);
+void loadPortForwards(NatContext* ctx);
 
 // Check for incoming port-forwarded connections
 void natCheckPortForwards(NatContext* ctx);

@@ -448,7 +448,6 @@ void dialOut(String upCmd) {
   }
 
   // Check for special dial strings for PPP mode
-  // Dial "PPP", "777", or "*77"
   if (dialStr == "PPP" || dialStr == "777") {
     // Check WiFi first
     if (WiFi.status() != WL_CONNECTED) {
@@ -1009,6 +1008,12 @@ void enterModemMode()
     recvChanged=false;
     speedDialShown=false;
     callConnected=false;
+
+    // Clear command buffer and flush serial input to prevent stale data
+    // from causing Enter key to not register after reboot
+    cmd = "";
+    cmdMode = true;
+    clearInputBuffer();
 
     modem_timer.every(250, refreshDisplay);
 
@@ -1779,11 +1784,13 @@ void modemLoop()
       // Backspace or delete deletes previous character
       else if ((chr == 8) || (chr == 127) || (chr == 20))
       {
-        cmd.remove(cmd.length() - 1);
-        if (echo == true) {
-          SerialWrite(chr);
-          displayChar(chr, XFER_RECV);
-          display.display();
+        if (cmd.length() > 0) {
+          cmd.remove(cmd.length() - 1);
+          if (echo == true) {
+            SerialWrite(chr);
+            displayChar(chr, XFER_RECV);
+            display.display();
+          }
         }
       }
       else

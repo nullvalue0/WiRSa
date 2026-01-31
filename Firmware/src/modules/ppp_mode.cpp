@@ -25,7 +25,7 @@ PppNatContext pppNatCtx;
 PppModeContext pppModeCtx;
 
 // Menu definitions
-static String pppMenuDisp[] = { "MAIN", "Start Gateway", "Configure IP", "View Stats" };
+static String pppMenuDisp[] = { "MAIN", "Start Gateway", "Configure IP", "Port Forwards", "View Stats" };
 static String pppActiveMenuDisp[] = { "Exit Gateway", "Info", "Totals" };
 
 // External functions from display_menu.cpp
@@ -55,6 +55,10 @@ static void pppUpdateActiveDisplay();
 static void pppProcessFrame();
 static bool parseIPAddress(const String& str, IPAddress& ip);
 static void pppConfigureIP();
+static void pppConfigurePortForward();
+static void pppAddPortForward();
+static void pppRemovePortForward();
+static void pppListPortForwards();
 
 // External functions
 extern String getLine();
@@ -74,7 +78,7 @@ void pppMenu(bool arrow) {
         pppModeCtx.state == PPP_MODE_STARTING) {
         showMenu("PPP", pppActiveMenuDisp, 3, (arrow ? MENU_DISP : MENU_BOTH), 0);
     } else {
-        showMenu("PPP", pppMenuDisp, 4, (arrow ? MENU_DISP : MENU_BOTH), 0);
+        showMenu("PPP", pppMenuDisp, 5, (arrow ? MENU_DISP : MENU_BOTH), 0);
     }
 }
 
@@ -215,7 +219,11 @@ static void pppMenuLoop() {
             pppConfigureIP();
             pppMenu(false);
         }
-        else if (chr == 'V' || chr == 'v' || menuSel == 3) {
+        else if (chr == 'P' || chr == 'p' || menuSel == 3) {
+            // Port Forwards submenu
+            pppConfigurePortForward();
+        }
+        else if (chr == 'V' || chr == 'v' || menuSel == 4) {
             pppShowStatistics();
         }
         else {
@@ -336,6 +344,9 @@ static void pppActiveLoop() {
                 // Configure NAT with assigned IP
                 pppNatSetIPs(&pppNatCtx, ipcpCtx.ourIP, ipcpCtx.peerIP,
                              IPAddress(255, 255, 255, 0), ipcpCtx.primaryDns);
+
+                // Start port forward servers now that gateway is active
+                pppNatStartPortForwardServers(&pppNatCtx);
             }
         }
 
@@ -363,6 +374,9 @@ static void pppActiveLoop() {
         }
 
         pppNatPollConnections(&pppNatCtx, &pppCtx);
+
+        // Check port forwards for incoming connections
+        pppNatCheckPortForwards(&pppNatCtx, &pppCtx);
 
         // Periodic cleanup
         if (now - pppModeCtx.lastCleanup > 10000) {
@@ -477,6 +491,9 @@ void enterPppMode() {
     lcpInit(&lcpCtx);
     ipcpInit(&ipcpCtx);
     pppNatInit(&pppNatCtx);
+
+    // Load port forwards from shared EEPROM storage
+    pppLoadPortForwards(&pppNatCtx);
 
     // Apply configuration
     ipcpSetGatewayIP(&ipcpCtx, pppModeCtx.config.gatewayIP);
@@ -648,6 +665,261 @@ void pppShowStatistics() {
     showMessage("Stats shown\non serial");
     delay(1500);
     pppMenu(false);
+}
+
+// ============================================================================
+// Configure Port Forwards - Submenu
+// ============================================================================
+
+static void pppConfigurePortForward() {
+    // Load port forwards from EEPROM (in case of reboot)
+    pppLoadPortForwards(&pppNatCtx);
+
+    // Show submenu
+    SerialPrintLn("\r\n-=-=- PPP Port Forwarding Menu -=-=-");
+    SerialPrintLn("[A]dd Forward");
+    SerialPrintLn("[R]emove Forward");
+    SerialPrintLn("[L]ist Forwards");
+    SerialPrintLn("[B]ack");
+    SerialPrintLn();
+    SerialPrint("> ");
+
+    showMessage("Port Fwd Menu\nSee serial");
+
+    // Wait for single keypress
+    while (SerialAvailable() == 0) {
+        delay(10);
+    }
+    char chr = SerialRead();
+    SerialPrintLn(chr);  // Echo the character
+
+    if (chr == 'A' || chr == 'a') {
+        pppAddPortForward();
+    }
+    else if (chr == 'R' || chr == 'r') {
+        pppRemovePortForward();
+    }
+    else if (chr == 'L' || chr == 'l') {
+        pppListPortForwards();
+    }
+    else {
+        // Back or invalid - return to PPP menu
+        pppMenu(false);
+    }
+}
+
+// ============================================================================
+// Add Port Forward - Wizard
+// ============================================================================
+
+static void pppAddPortForward() {
+    loadPppSettings();  // Ensure we have current settings
+
+    SerialPrintLn("\r\n-=-=- Add PPP Port Forward -=-=-");
+    SerialPrintLn();
+
+    // Prompt for protocol (TCP or UDP)
+    String protoPrompt = "Protocol (TCP/UDP): ";
+    String protoStr = prompt(protoPrompt, "TCP");
+    protoStr.toUpperCase();
+
+    if (protoStr != "TCP" && protoStr != "UDP") {
+        SerialPrintLn("Invalid protocol - must be TCP or UDP");
+        showMessage("Invalid\nprotocol");
+        delay(1500);
+        pppConfigurePortForward();
+        return;
+    }
+
+    uint8_t proto = (protoStr == "TCP") ? PPP_IP_PROTO_TCP : PPP_IP_PROTO_UDP;
+
+    // Prompt for external port
+    String extPortPrompt = "External Port (on ESP32): ";
+    String extPortStr = prompt(extPortPrompt, "");
+
+    if (extPortStr == "") {
+        SerialPrintLn("Canceled");
+        showMessage("Canceled");
+        delay(1000);
+        pppConfigurePortForward();
+        return;
+    }
+
+    uint16_t extPort = extPortStr.toInt();
+    if (extPort < 1 || extPort > 65535) {
+        SerialPrintLn("Invalid port number");
+        showMessage("Invalid port");
+        delay(1500);
+        pppConfigurePortForward();
+        return;
+    }
+
+    // Prompt for internal IP (default to pool start IP - the client's IP)
+    String intIPPrompt = "Internal IP: ";
+    String currentClient = ipToString(pppModeCtx.config.poolStart);
+    String intIPStr = prompt(intIPPrompt, currentClient);
+
+    IPAddress intIP;
+    if (!parseIPAddress(intIPStr, intIP)) {
+        SerialPrintLn("Invalid IP format");
+        showMessage("Invalid IP");
+        delay(1500);
+        pppConfigurePortForward();
+        return;
+    }
+
+    // Prompt for internal port
+    String intPortPrompt = "Internal Port (on client): ";
+    String intPortStr = prompt(intPortPrompt, extPortStr);  // Default to same as external
+
+    if (intPortStr == "") {
+        SerialPrintLn("Canceled");
+        showMessage("Canceled");
+        delay(1000);
+        pppConfigurePortForward();
+        return;
+    }
+
+    uint16_t intPort = intPortStr.toInt();
+    if (intPort < 1 || intPort > 65535) {
+        SerialPrintLn("Invalid port number");
+        showMessage("Invalid port");
+        delay(1500);
+        pppConfigurePortForward();
+        return;
+    }
+
+    // Add the forward
+    int idx = pppNatAddPortForward(&pppNatCtx, proto, extPort, intIP, intPort);
+
+    if (idx >= 0) {
+        // Save to EEPROM (shared storage with SLIP)
+        pppSavePortForwards(&pppNatCtx);
+
+        SerialPrintLn("\r\nPort forward added:");
+        SerialPrint("  ");
+        SerialPrint(protoStr);
+        SerialPrint(" ");
+        SerialPrint(extPort);
+        SerialPrint(" -> ");
+        SerialPrint(ipToString(intIP));
+        SerialPrint(":");
+        SerialPrintLn(intPort);
+
+        showMessage("Forward\nadded!");
+        delay(1500);
+    } else {
+        SerialPrintLn("Failed to add forward - table full");
+        showMessage("Table full!\nRemove some");
+        delay(2000);
+    }
+
+    pppConfigurePortForward();
+}
+
+// ============================================================================
+// Remove Port Forward - Wizard
+// ============================================================================
+
+static void pppRemovePortForward() {
+    SerialPrintLn("\r\n-=-=- Remove PPP Port Forward -=-=-");
+    SerialPrintLn("Active port forwards:");
+
+    int count = 0;
+    for (int i = 0; i < PPP_NAT_MAX_PORT_FORWARDS; i++) {
+        if (pppNatCtx.portForwards[i].active) {
+            SerialPrint("  ");
+            SerialPrint(i);
+            SerialPrint(": ");
+            SerialPrint(pppNatCtx.portForwards[i].protocol == PPP_IP_PROTO_TCP ? "TCP" : "UDP");
+            SerialPrint(" ");
+            SerialPrint(pppNatCtx.portForwards[i].externalPort);
+            SerialPrint(" -> ");
+            SerialPrint(ipToString(pppNatCtx.portForwards[i].internalIP));
+            SerialPrint(":");
+            SerialPrintLn(pppNatCtx.portForwards[i].internalPort);
+            count++;
+        }
+    }
+
+    if (count == 0) {
+        SerialPrintLn("  (none configured)");
+        showMessage("No forwards\nto remove");
+        delay(1500);
+        pppConfigurePortForward();
+        return;
+    }
+
+    SerialPrintLn();
+    SerialPrint("Index to remove (0-7, B=back): ");
+
+    // Wait for single keypress
+    while (SerialAvailable() == 0) {
+        delay(10);
+    }
+    char chr = SerialRead();
+    SerialPrintLn(chr);  // Echo the character
+
+    if (chr == 'B' || chr == 'b') {
+        pppConfigurePortForward();
+        return;
+    }
+
+    int idx = chr - '0';
+    if (idx < 0 || idx >= PPP_NAT_MAX_PORT_FORWARDS || !pppNatCtx.portForwards[idx].active) {
+        SerialPrintLn("Invalid index");
+        showMessage("Invalid index");
+        delay(1500);
+        pppConfigurePortForward();
+        return;
+    }
+
+    pppNatRemovePortForward(&pppNatCtx, idx);
+
+    // Save to EEPROM (shared storage with SLIP)
+    pppSavePortForwards(&pppNatCtx);
+
+    SerialPrintLn("Port forward removed");
+    showMessage("Forward\nremoved!");
+    delay(1500);
+
+    pppConfigurePortForward();
+}
+
+// ============================================================================
+// List Port Forwards
+// ============================================================================
+
+static void pppListPortForwards() {
+    SerialPrintLn("\r\n-=-=- PPP Port Forwarding -=-=-");
+    SerialPrintLn("Active port forwards:");
+
+    int count = 0;
+    for (int i = 0; i < PPP_NAT_MAX_PORT_FORWARDS; i++) {
+        if (pppNatCtx.portForwards[i].active) {
+            SerialPrint("  ");
+            SerialPrint(i);
+            SerialPrint(": ");
+            SerialPrint(pppNatCtx.portForwards[i].protocol == PPP_IP_PROTO_TCP ? "TCP" : "UDP");
+            SerialPrint(" ");
+            SerialPrint(pppNatCtx.portForwards[i].externalPort);
+            SerialPrint(" -> ");
+            SerialPrint(ipToString(pppNatCtx.portForwards[i].internalIP));
+            SerialPrint(":");
+            SerialPrintLn(pppNatCtx.portForwards[i].internalPort);
+            count++;
+        }
+    }
+
+    if (count == 0) {
+        SerialPrintLn("  (none configured)");
+    }
+
+    SerialPrintLn("\r\nNote: Port forwards are shared between PPP and SLIP modes.");
+
+    showMessage("Forwards shown\non serial");
+    delay(2000);
+    pppConfigurePortForward();
 }
 
 // ============================================================================
@@ -828,6 +1100,7 @@ bool handlePppCommand(String& cmd, String& upCmd) {
     // AT$PPPSHOW - Show configuration
     if (upCmd == "AT$PPPSHOW") {
         loadPppSettings();
+        pppLoadPortForwards(&pppNatCtx);
         SerialPrintLn("\r\n=== PPP Configuration ===");
         SerialPrint("Gateway IP:    ");
         SerialPrintLn(ipToString(pppModeCtx.config.gatewayIP));
@@ -837,6 +1110,26 @@ bool handlePppCommand(String& cmd, String& upCmd) {
         SerialPrintLn(ipToString(pppModeCtx.config.primaryDns));
         SerialPrint("Secondary DNS: ");
         SerialPrintLn(ipToString(pppModeCtx.config.secondaryDns));
+
+        // Show port forwards
+        SerialPrintLn("\r\n--- Port Forwards ---");
+        int count = 0;
+        for (int i = 0; i < PPP_NAT_MAX_PORT_FORWARDS; i++) {
+            if (pppNatCtx.portForwards[i].active) {
+                SerialPrint("  ");
+                SerialPrint(pppNatCtx.portForwards[i].protocol == PPP_IP_PROTO_TCP ? "TCP" : "UDP");
+                SerialPrint(" ");
+                SerialPrint(pppNatCtx.portForwards[i].externalPort);
+                SerialPrint(" -> ");
+                SerialPrint(ipToString(pppNatCtx.portForwards[i].internalIP));
+                SerialPrint(":");
+                SerialPrintLn(pppNatCtx.portForwards[i].internalPort);
+                count++;
+            }
+        }
+        if (count == 0) {
+            SerialPrintLn("  (none configured)");
+        }
         return true;
     }
 
@@ -902,6 +1195,113 @@ bool handlePppCommand(String& cmd, String& upCmd) {
             SerialPrintLn("Invalid IP address");
             return false;
         }
+    }
+
+    // AT$PPPFWD=TCP,extport,intport - Add port forward (to pool start IP)
+    if (upCmd.indexOf("AT$PPPFWD=") == 0) {
+        String params = cmd.substring(10);
+
+        // Parse protocol
+        int comma1 = params.indexOf(',');
+        if (comma1 < 0) {
+            SerialPrintLn("Usage: AT$PPPFWD=TCP|UDP,extport,intport");
+            return false;
+        }
+        String protoStr = params.substring(0, comma1);
+        protoStr.toUpperCase();
+
+        uint8_t proto;
+        if (protoStr == "TCP") {
+            proto = PPP_IP_PROTO_TCP;
+        } else if (protoStr == "UDP") {
+            proto = PPP_IP_PROTO_UDP;
+        } else {
+            SerialPrintLn("Invalid protocol (use TCP or UDP)");
+            return false;
+        }
+
+        // Parse external port
+        int comma2 = params.indexOf(',', comma1 + 1);
+        if (comma2 < 0) {
+            SerialPrintLn("Usage: AT$PPPFWD=TCP|UDP,extport,intport");
+            return false;
+        }
+        uint16_t extPort = params.substring(comma1 + 1, comma2).toInt();
+        if (extPort < 1 || extPort > 65535) {
+            SerialPrintLn("Invalid external port");
+            return false;
+        }
+
+        // Parse internal port
+        uint16_t intPort = params.substring(comma2 + 1).toInt();
+        if (intPort < 1 || intPort > 65535) {
+            SerialPrintLn("Invalid internal port");
+            return false;
+        }
+
+        // Load current settings for client IP
+        loadPppSettings();
+        pppLoadPortForwards(&pppNatCtx);
+
+        // Add forward (using pool start as internal IP)
+        int idx = pppNatAddPortForward(&pppNatCtx, proto, extPort,
+                                        pppModeCtx.config.poolStart, intPort);
+        if (idx >= 0) {
+            pppSavePortForwards(&pppNatCtx);
+            SerialPrint("Port forward added: ");
+            SerialPrint(protoStr);
+            SerialPrint(" ");
+            SerialPrint(extPort);
+            SerialPrint(" -> ");
+            SerialPrint(ipToString(pppModeCtx.config.poolStart));
+            SerialPrint(":");
+            SerialPrintLn(intPort);
+            return true;
+        } else {
+            SerialPrintLn("Port forward table full");
+            return false;
+        }
+    }
+
+    // AT$PPPFWDDEL=index - Remove port forward
+    if (upCmd.indexOf("AT$PPPFWDDEL=") == 0) {
+        pppLoadPortForwards(&pppNatCtx);
+        int idx = cmd.substring(13).toInt();
+        if (idx < 0 || idx >= PPP_NAT_MAX_PORT_FORWARDS ||
+            !pppNatCtx.portForwards[idx].active) {
+            SerialPrintLn("Invalid index");
+            return false;
+        }
+        pppNatRemovePortForward(&pppNatCtx, idx);
+        pppSavePortForwards(&pppNatCtx);
+        SerialPrintLn("Port forward removed");
+        return true;
+    }
+
+    // AT$PPPFWDLIST - List port forwards
+    if (upCmd == "AT$PPPFWDLIST") {
+        pppLoadPortForwards(&pppNatCtx);
+        SerialPrintLn("\r\n=== PPP Port Forwards ===");
+        int count = 0;
+        for (int i = 0; i < PPP_NAT_MAX_PORT_FORWARDS; i++) {
+            if (pppNatCtx.portForwards[i].active) {
+                SerialPrint(i);
+                SerialPrint(": ");
+                SerialPrint(pppNatCtx.portForwards[i].protocol == PPP_IP_PROTO_TCP ? "TCP" : "UDP");
+                SerialPrint(" ");
+                SerialPrint(pppNatCtx.portForwards[i].externalPort);
+                SerialPrint(" -> ");
+                SerialPrint(ipToString(pppNatCtx.portForwards[i].internalIP));
+                SerialPrint(":");
+                SerialPrintLn(pppNatCtx.portForwards[i].internalPort);
+                count++;
+            }
+        }
+        if (count == 0) {
+            SerialPrintLn("(none configured)");
+        }
+        SerialPrintLn("\r\nNote: Port forwards are shared between PPP and SLIP.");
+        return true;
     }
 
     return false;  // Command not handled

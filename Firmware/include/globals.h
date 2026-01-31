@@ -109,7 +109,14 @@
 #define DEFAULTMODE_ADDRESS 790
 #define SERIALCONFIG_ADDRESS 791
 #define USB_DEBUG_ADDRESS 792
-#define LAST_ADDRESS    920   // Extended for SLIP (800-880) and PPP (900-920)
+
+// Port Forwarding (generic, shared by SLIP and PPP)
+#define PORTFWD_BASE    950   // Port forwards start here
+#define PORTFWD_SIZE    10    // 10 bytes per entry (active, proto, extPort, intPort, intIP)
+#define PORTFWD_COUNT   8     // Max 8 port forwards
+// Total: 950 + (8 * 10) = 1030
+
+#define LAST_ADDRESS    1030  // Extended for port forwards
 
 // Version
 #define VERSIONA 0

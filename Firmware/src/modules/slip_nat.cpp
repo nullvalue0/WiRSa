@@ -9,6 +9,7 @@
 #include "slip.h"
 #include "globals.h"
 #include "serial_io.h"
+#include <EEPROM.h>
 
 // lwIP includes for raw ICMP socket
 extern "C" {
@@ -361,7 +362,39 @@ static void natProcessTcp(NatContext* ctx, uint8_t* packet, uint16_t length,
     // Find existing connection or create new one on SYN
     NatTcpEntry* entry = natFindTcpEntry(ctx, srcIP, srcPort, dstIP, dstPort);
 
+    // Debug: always log TCP packet details
+    NAT_DEBUG_F("NAT: TCP %d.%d.%d.%d:%d -> %d.%d.%d.%d:%d flags=0x%02X entry=%s",
+                srcIP[0], srcIP[1], srcIP[2], srcIP[3], srcPort,
+                dstIP[0], dstIP[1], dstIP[2], dstIP[3], dstPort,
+                flags, entry ? "found" : "null");
+
     if (flags & TCP_FLAG_SYN) {
+        // Debug: log SYN packet details
+        NAT_DEBUG_F("NAT: TCP SYN state=%d", entry ? entry->state : -1);
+
+        // Check if this is a SYN-ACK response (for port forwarding)
+        if ((flags & TCP_FLAG_ACK) && entry && entry->state == NAT_TCP_ESTABLISHED) {
+            // This is a SYN-ACK from the vintage computer responding to our SYN
+            // (port forwarding case). Complete the 3-way handshake.
+            entry->clientSeq = ntohl(tcp->seqNum) + 1;
+            entry->clientAck = ntohl(tcp->ackNum);
+
+            // Update serverAck - vintage computer acknowledged our SYN
+            // This is critical for flow control to work
+            entry->serverAck = ntohl(tcp->ackNum);
+
+            entry->lastActivity = millis();
+            entry->lastKeepalive = millis();
+
+            NAT_DEBUG_F("NAT: Port forward SYN-ACK received, sending ACK (clientSeq=%u, serverAck=%u)",
+                        entry->clientSeq, entry->serverAck);
+
+            // Send ACK to complete 3-way handshake with vintage computer
+            natSendTcpToClient(ctx, entry, nullptr, 0, TCP_FLAG_ACK);
+            ctx->tcpConnections++;
+            return;
+        }
+
         // New connection request
         if (!entry) {
             // Check for stuck connection to same destination - helps with reconnection
@@ -1274,7 +1307,7 @@ void natSendToClient(NatContext* ctx, uint8_t* packet, uint16_t length) {
 // ============================================================================
 
 int natAddPortForward(NatContext* ctx, uint8_t proto, uint16_t extPort,
-                      IPAddress intIP, uint16_t intPort) {
+                      IPAddress intIP, uint16_t intPort, bool startServer) {
     // Find free slot
     for (int i = 0; i < NAT_MAX_PORT_FORWARDS; i++) {
         if (!ctx->portForwards[i].active) {
@@ -1284,8 +1317,8 @@ int natAddPortForward(NatContext* ctx, uint8_t proto, uint16_t extPort,
             ctx->portForwards[i].internalIP = intIP;
             ctx->portForwards[i].internalPort = intPort;
 
-            // Start listener for TCP port forwards
-            if (proto == IP_PROTO_TCP) {
+            // Start listener for TCP port forwards only if requested
+            if (startServer && proto == IP_PROTO_TCP) {
                 ctx->tcpForwardServers[i] = new WiFiServer(extPort);
                 ctx->tcpForwardServers[i]->begin();
             }
@@ -1293,6 +1326,27 @@ int natAddPortForward(NatContext* ctx, uint8_t proto, uint16_t extPort,
         }
     }
     return -1;  // Table full
+}
+
+void natStartPortForwardServers(NatContext* ctx) {
+    for (int i = 0; i < NAT_MAX_PORT_FORWARDS; i++) {
+        if (ctx->portForwards[i].active &&
+            ctx->portForwards[i].protocol == IP_PROTO_TCP &&
+            !ctx->tcpForwardServers[i]) {
+            ctx->tcpForwardServers[i] = new WiFiServer(ctx->portForwards[i].externalPort);
+            ctx->tcpForwardServers[i]->begin();
+        }
+    }
+}
+
+void natStopPortForwardServers(NatContext* ctx) {
+    for (int i = 0; i < NAT_MAX_PORT_FORWARDS; i++) {
+        if (ctx->tcpForwardServers[i]) {
+            ctx->tcpForwardServers[i]->stop();
+            delete ctx->tcpForwardServers[i];
+            ctx->tcpForwardServers[i] = nullptr;
+        }
+    }
 }
 
 void natRemovePortForward(NatContext* ctx, int index) {
@@ -1330,6 +1384,10 @@ void natCheckPortForwards(NatContext* ctx) {
                 entry->client = new WiFiClient(newClient);
                 entry->state = NAT_TCP_ESTABLISHED;
 
+                NAT_DEBUG_F("NAT: Port forward entry created: src=%d.%d.%d.%d:%d dst=%d.%d.%d.%d:%d",
+                            entry->srcIP[0], entry->srcIP[1], entry->srcIP[2], entry->srcIP[3], entry->srcPort,
+                            entry->dstIP[0], entry->dstIP[1], entry->dstIP[2], entry->dstIP[3], entry->dstPort);
+
                 // Send SYN to internal host
                 natSendTcpToClient(ctx, entry, nullptr, 0, TCP_FLAG_SYN);
             } else {
@@ -1358,4 +1416,52 @@ int natGetActiveUdpCount(NatContext* ctx) {
         if (ctx->udpTable[i].active) count++;
     }
     return count;
+}
+
+// ============================================================================
+// Port Forward Persistence (EEPROM)
+// ============================================================================
+
+void savePortForwards(NatContext* ctx) {
+    for (int i = 0; i < PORTFWD_COUNT; i++) {
+        int addr = PORTFWD_BASE + (i * PORTFWD_SIZE);
+
+        if (ctx->portForwards[i].active) {
+            EEPROM.write(addr, 1);  // active flag
+            EEPROM.write(addr + 1, ctx->portForwards[i].protocol);
+            EEPROM.write(addr + 2, (ctx->portForwards[i].externalPort >> 8) & 0xFF);
+            EEPROM.write(addr + 3, ctx->portForwards[i].externalPort & 0xFF);
+            EEPROM.write(addr + 4, (ctx->portForwards[i].internalPort >> 8) & 0xFF);
+            EEPROM.write(addr + 5, ctx->portForwards[i].internalPort & 0xFF);
+            EEPROM.write(addr + 6, ctx->portForwards[i].internalIP[0]);
+            EEPROM.write(addr + 7, ctx->portForwards[i].internalIP[1]);
+            EEPROM.write(addr + 8, ctx->portForwards[i].internalIP[2]);
+            EEPROM.write(addr + 9, ctx->portForwards[i].internalIP[3]);
+        } else {
+            EEPROM.write(addr, 0);  // inactive
+        }
+    }
+    EEPROM.commit();
+}
+
+void loadPortForwards(NatContext* ctx) {
+    for (int i = 0; i < PORTFWD_COUNT; i++) {
+        int addr = PORTFWD_BASE + (i * PORTFWD_SIZE);
+
+        uint8_t active = EEPROM.read(addr);
+        if (active == 1) {
+            ctx->portForwards[i].active = true;
+            ctx->portForwards[i].protocol = EEPROM.read(addr + 1);
+            ctx->portForwards[i].externalPort = (EEPROM.read(addr + 2) << 8) | EEPROM.read(addr + 3);
+            ctx->portForwards[i].internalPort = (EEPROM.read(addr + 4) << 8) | EEPROM.read(addr + 5);
+            ctx->portForwards[i].internalIP = IPAddress(
+                EEPROM.read(addr + 6),
+                EEPROM.read(addr + 7),
+                EEPROM.read(addr + 8),
+                EEPROM.read(addr + 9)
+            );
+        } else {
+            ctx->portForwards[i].active = false;
+        }
+    }
 }

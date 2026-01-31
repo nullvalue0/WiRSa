@@ -21,6 +21,7 @@
 #define PPP_NAT_MAX_TCP     12      // Max concurrent TCP connections
 #define PPP_NAT_MAX_UDP     32      // Max concurrent UDP sessions
 #define PPP_NAT_MAX_ICMP    8       // Max concurrent ICMP (ping) sessions
+#define PPP_NAT_MAX_PORT_FORWARDS 8 // Max port forwarding rules (matches SLIP)
 
 // Timeout values (milliseconds)
 #define PPP_NAT_TCP_TIMEOUT_MS      1800000 // 30 minutes for established TCP (IRC, etc)
@@ -196,6 +197,18 @@ struct __attribute__((packed)) PppIcmpHeader {
 #define PPP_ICMP_ECHO_REQUEST   8
 
 // ============================================================================
+// Port Forward Entry (shared format with SLIP for EEPROM compatibility)
+// ============================================================================
+
+struct PppPortForwardEntry {
+    bool active;
+    uint8_t protocol;       // PPP_IP_PROTO_TCP or PPP_IP_PROTO_UDP
+    uint16_t externalPort;  // Port on ESP32 (WAN side)
+    IPAddress internalIP;   // Destination IP (vintage computer)
+    uint16_t internalPort;  // Destination port
+};
+
+// ============================================================================
 // PPP NAT Context
 // ============================================================================
 
@@ -211,12 +224,18 @@ struct PppNatContext {
     PppNatUdpEntry udpTable[PPP_NAT_MAX_UDP];
     PppNatIcmpEntry icmpTable[PPP_NAT_MAX_ICMP];
 
+    // Port forwarding rules (shared EEPROM storage with SLIP)
+    PppPortForwardEntry portForwards[PPP_NAT_MAX_PORT_FORWARDS];
+
     // UDP socket for outbound NAT
     WiFiUDP udpSocket;
     bool udpSocketBound;
 
     // ICMP socket for ping NAT (lwIP raw socket)
     void* icmpPcb;          // struct raw_pcb* (opaque to avoid header dependency)
+
+    // Port forwarding servers (TCP listeners)
+    WiFiServer* tcpForwardServers[PPP_NAT_MAX_PORT_FORWARDS];
 
     // Ephemeral port counter
     uint16_t nextPort;
@@ -275,5 +294,19 @@ void pppNatSendToClient(PppNatContext* ctx, PppContext* ppp,
 // Get active connection counts
 int pppNatGetActiveTcpCount(PppNatContext* ctx);
 int pppNatGetActiveUdpCount(PppNatContext* ctx);
+
+// Port forwarding management (uses shared EEPROM storage with SLIP)
+int pppNatAddPortForward(PppNatContext* ctx, uint8_t proto, uint16_t extPort,
+                         IPAddress intIP, uint16_t intPort, bool startServer = false);
+void pppNatRemovePortForward(PppNatContext* ctx, int index);
+void pppNatStartPortForwardServers(PppNatContext* ctx);
+void pppNatStopPortForwardServers(PppNatContext* ctx);
+
+// Port forward persistence (EEPROM - shared storage with SLIP)
+void pppSavePortForwards(PppNatContext* ctx);
+void pppLoadPortForwards(PppNatContext* ctx);
+
+// Check for incoming port-forwarded connections
+void pppNatCheckPortForwards(PppNatContext* ctx, PppContext* ppp);
 
 #endif // PPP_NAT_H

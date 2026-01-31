@@ -74,10 +74,22 @@ void SerialPrintLn(unsigned char n, int base) {
   if (consoleReady()) consoleClient.println(n, base);
 }
 
+void SerialPrintLn(int n) {
+  Serial.println(n);
+  if (physicalSerialReady()) PhysicalSerial.println(n);
+  if (consoleReady()) consoleClient.println(n);
+}
+
 void SerialPrintLn(int n, int base) {
   Serial.println(n, base);
   if (physicalSerialReady()) PhysicalSerial.println(n, base);
   if (consoleReady()) consoleClient.println(n, base);
+}
+
+void SerialPrintLn(unsigned int n) {
+  Serial.println(n);
+  if (physicalSerialReady()) PhysicalSerial.println(n);
+  if (consoleReady()) consoleClient.println(n);
 }
 
 void SerialPrintLn(unsigned int n, int base) {
@@ -86,10 +98,22 @@ void SerialPrintLn(unsigned int n, int base) {
   if (consoleReady()) consoleClient.println(n, base);
 }
 
+void SerialPrintLn(long n) {
+  Serial.println(n);
+  if (physicalSerialReady()) PhysicalSerial.println(n);
+  if (consoleReady()) consoleClient.println(n);
+}
+
 void SerialPrintLn(long n, int base) {
   Serial.println(n, base);
   if (physicalSerialReady()) PhysicalSerial.println(n, base);
   if (consoleReady()) consoleClient.println(n, base);
+}
+
+void SerialPrintLn(unsigned long n) {
+  Serial.println(n);
+  if (physicalSerialReady()) PhysicalSerial.println(n);
+  if (consoleReady()) consoleClient.println(n);
 }
 
 void SerialPrintLn(unsigned long n, int base) {
@@ -104,10 +128,22 @@ void SerialPrint(unsigned char n, int base) {
   if (consoleReady()) consoleClient.print(n, base);
 }
 
+void SerialPrint(int n) {
+  Serial.print(n);
+  if (physicalSerialReady()) PhysicalSerial.print(n);
+  if (consoleReady()) consoleClient.print(n);
+}
+
 void SerialPrint(int n, int base) {
   Serial.print(n, base);
   if (physicalSerialReady()) PhysicalSerial.print(n, base);
   if (consoleReady()) consoleClient.print(n, base);
+}
+
+void SerialPrint(unsigned int n) {
+  Serial.print(n);
+  if (physicalSerialReady()) PhysicalSerial.print(n);
+  if (consoleReady()) consoleClient.print(n);
 }
 
 void SerialPrint(unsigned int n, int base) {
@@ -116,10 +152,22 @@ void SerialPrint(unsigned int n, int base) {
   if (consoleReady()) consoleClient.print(n, base);
 }
 
+void SerialPrint(long n) {
+  Serial.print(n);
+  if (physicalSerialReady()) PhysicalSerial.print(n);
+  if (consoleReady()) consoleClient.print(n);
+}
+
 void SerialPrint(long n, int base) {
   Serial.print(n, base);
   if (physicalSerialReady()) PhysicalSerial.print(n, base);
   if (consoleReady()) consoleClient.print(n, base);
+}
+
+void SerialPrint(unsigned long n) {
+  Serial.print(n);
+  if (physicalSerialReady()) PhysicalSerial.print(n);
+  if (consoleReady()) consoleClient.print(n);
 }
 
 void SerialPrint(unsigned long n, int base) {

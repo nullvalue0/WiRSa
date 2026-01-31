@@ -71,6 +71,9 @@ static void pppNatSendIcmpToClient(PppNatContext* ctx, PppContext* ppp,
 static u8_t pppNatIcmpRecvCallback(void* arg, struct raw_pcb* pcb,
                                     struct pbuf* p, const ip_addr_t* addr);
 
+// Port forwarding forward declarations
+void pppNatStopPortForwardServers(PppNatContext* ctx);
+
 // ============================================================================
 // Initialize NAT Context
 // ============================================================================
@@ -95,6 +98,12 @@ void pppNatInit(PppNatContext* ctx) {
     // Initialize ICMP table
     for (int i = 0; i < PPP_NAT_MAX_ICMP; i++) {
         ctx->icmpTable[i].active = false;
+    }
+
+    // Initialize port forwarding tables
+    for (int i = 0; i < PPP_NAT_MAX_PORT_FORWARDS; i++) {
+        ctx->portForwards[i].active = false;
+        ctx->tcpForwardServers[i] = nullptr;
     }
 
     ctx->udpSocketBound = false;
@@ -162,6 +171,9 @@ void pppNatShutdown(PppNatContext* ctx) {
     for (int i = 0; i < PPP_NAT_MAX_ICMP; i++) {
         ctx->icmpTable[i].active = false;
     }
+
+    // Stop port forward servers
+    pppNatStopPortForwardServers(ctx);
 
     if (ctx->udpSocketBound) {
         ctx->udpSocket.stop();
@@ -440,6 +452,7 @@ static void pppNatProcessTcp(PppNatContext* ctx, PppContext* ppp,
         entry->clientAck = ntohl(tcp->ackNum);
 
         if (entry->state == PPP_NAT_TCP_CLOSED) {
+            // Outbound connection: internal host initiated
             entry->state = PPP_NAT_TCP_SYN_SENT;
             entry->created = millis();
             entry->lastActivity = millis();
@@ -472,6 +485,25 @@ static void pppNatProcessTcp(PppNatContext* ctx, PppContext* ppp,
                 delete entry->client;
                 entry->client = nullptr;
             }
+        } else if (entry->state == PPP_NAT_TCP_SYN_SENT && (flags & PPP_TCP_FLAG_ACK)) {
+            // Port forward case: received SYN-ACK from internal host
+            // This completes the three-way handshake
+            NAT_DEBUG_F("NAT: Port forward SYN-ACK received, ACK=%u, serverSeq=%u",
+                        ntohl(tcp->ackNum), entry->serverSeq);
+
+            // Update serverAck from the ACK in the SYN-ACK
+            // This is critical for flow control to work
+            entry->serverAck = ntohl(tcp->ackNum);
+            entry->state = PPP_NAT_TCP_ESTABLISHED;
+            entry->lastActivity = millis();
+            entry->lastKeepalive = millis();
+            ctx->tcpConnections++;
+
+            NAT_DEBUG_F("NAT: Port forward handshake complete (clientSeq=%u, serverAck=%u)",
+                        entry->clientSeq, entry->serverAck);
+
+            // Send ACK to complete three-way handshake
+            pppNatSendTcpToClient(ctx, ppp, entry, nullptr, 0, PPP_TCP_FLAG_ACK);
         }
         return;
     }
@@ -1318,4 +1350,166 @@ int pppNatGetActiveUdpCount(PppNatContext* ctx) {
         if (ctx->udpTable[i].active) count++;
     }
     return count;
+}
+
+// ============================================================================
+// Port Forwarding Management
+// ============================================================================
+
+int pppNatAddPortForward(PppNatContext* ctx, uint8_t proto, uint16_t extPort,
+                         IPAddress intIP, uint16_t intPort, bool startServer) {
+    // Find free slot
+    for (int i = 0; i < PPP_NAT_MAX_PORT_FORWARDS; i++) {
+        if (!ctx->portForwards[i].active) {
+            ctx->portForwards[i].active = true;
+            ctx->portForwards[i].protocol = proto;
+            ctx->portForwards[i].externalPort = extPort;
+            ctx->portForwards[i].internalIP = intIP;
+            ctx->portForwards[i].internalPort = intPort;
+
+            // Start listener for TCP port forwards only if requested
+            if (startServer && proto == PPP_IP_PROTO_TCP) {
+                ctx->tcpForwardServers[i] = new WiFiServer(extPort);
+                ctx->tcpForwardServers[i]->begin();
+            }
+            return i;
+        }
+    }
+    return -1;  // Table full
+}
+
+void pppNatStartPortForwardServers(PppNatContext* ctx) {
+    for (int i = 0; i < PPP_NAT_MAX_PORT_FORWARDS; i++) {
+        if (ctx->portForwards[i].active &&
+            ctx->portForwards[i].protocol == PPP_IP_PROTO_TCP &&
+            !ctx->tcpForwardServers[i]) {
+            ctx->tcpForwardServers[i] = new WiFiServer(ctx->portForwards[i].externalPort);
+            ctx->tcpForwardServers[i]->begin();
+            NAT_DEBUG_F("NAT: Started port forward server on port %d",
+                        ctx->portForwards[i].externalPort);
+        }
+    }
+}
+
+void pppNatStopPortForwardServers(PppNatContext* ctx) {
+    for (int i = 0; i < PPP_NAT_MAX_PORT_FORWARDS; i++) {
+        if (ctx->tcpForwardServers[i]) {
+            ctx->tcpForwardServers[i]->stop();
+            delete ctx->tcpForwardServers[i];
+            ctx->tcpForwardServers[i] = nullptr;
+        }
+    }
+}
+
+void pppNatRemovePortForward(PppNatContext* ctx, int index) {
+    if (index < 0 || index >= PPP_NAT_MAX_PORT_FORWARDS) return;
+    if (!ctx->portForwards[index].active) return;
+
+    if (ctx->tcpForwardServers[index]) {
+        ctx->tcpForwardServers[index]->stop();
+        delete ctx->tcpForwardServers[index];
+        ctx->tcpForwardServers[index] = nullptr;
+    }
+    ctx->portForwards[index].active = false;
+}
+
+// ============================================================================
+// Check Port Forwards for Incoming Connections
+// ============================================================================
+
+void pppNatCheckPortForwards(PppNatContext* ctx, PppContext* ppp) {
+    for (int i = 0; i < PPP_NAT_MAX_PORT_FORWARDS; i++) {
+        if (!ctx->portForwards[i].active) continue;
+        if (ctx->portForwards[i].protocol != PPP_IP_PROTO_TCP) continue;
+        if (!ctx->tcpForwardServers[i]) continue;
+
+        WiFiClient newClient = ctx->tcpForwardServers[i]->available();
+        if (newClient) {
+            NAT_DEBUG_F("NAT: Port forward connection on port %d from %s",
+                        ctx->portForwards[i].externalPort,
+                        newClient.remoteIP().toString().c_str());
+
+            // Create NAT entry for this inbound connection
+            PppNatTcpEntry* entry = pppNatCreateTcpEntry(ctx,
+                ctx->portForwards[i].internalIP,
+                ctx->portForwards[i].internalPort,
+                newClient.remoteIP(),
+                newClient.remotePort());
+
+            if (entry) {
+                entry->client = new WiFiClient(newClient);
+                entry->state = PPP_NAT_TCP_SYN_SENT;  // Wait for SYN-ACK from internal host
+
+                // Initialize serverAck for flow control before sending SYN
+                // serverSeq will be incremented when SYN is sent
+                entry->serverAck = entry->serverSeq;
+
+                // Send SYN to internal host
+                pppNatSendTcpToClient(ctx, ppp, entry, nullptr, 0, PPP_TCP_FLAG_SYN);
+                NAT_DEBUG_F("NAT: Sent SYN to internal host %s:%d",
+                            ctx->portForwards[i].internalIP.toString().c_str(),
+                            ctx->portForwards[i].internalPort);
+            } else {
+                // No room - reject connection
+                newClient.stop();
+                NAT_DEBUG("NAT: Port forward rejected - TCP table full");
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Port Forward Persistence (EEPROM - shared storage with SLIP)
+// ============================================================================
+
+#include <EEPROM.h>
+
+void pppSavePortForwards(PppNatContext* ctx) {
+    for (int i = 0; i < PORTFWD_COUNT; i++) {
+        int addr = PORTFWD_BASE + (i * PORTFWD_SIZE);
+
+        if (ctx->portForwards[i].active) {
+            EEPROM.write(addr, 1);  // active flag
+            EEPROM.write(addr + 1, ctx->portForwards[i].protocol);
+            EEPROM.write(addr + 2, (ctx->portForwards[i].externalPort >> 8) & 0xFF);
+            EEPROM.write(addr + 3, ctx->portForwards[i].externalPort & 0xFF);
+            EEPROM.write(addr + 4, (ctx->portForwards[i].internalPort >> 8) & 0xFF);
+            EEPROM.write(addr + 5, ctx->portForwards[i].internalPort & 0xFF);
+            EEPROM.write(addr + 6, ctx->portForwards[i].internalIP[0]);
+            EEPROM.write(addr + 7, ctx->portForwards[i].internalIP[1]);
+            EEPROM.write(addr + 8, ctx->portForwards[i].internalIP[2]);
+            EEPROM.write(addr + 9, ctx->portForwards[i].internalIP[3]);
+        } else {
+            EEPROM.write(addr, 0);  // inactive
+        }
+    }
+    EEPROM.commit();
+}
+
+void pppLoadPortForwards(PppNatContext* ctx) {
+    for (int i = 0; i < PORTFWD_COUNT; i++) {
+        int addr = PORTFWD_BASE + (i * PORTFWD_SIZE);
+
+        uint8_t active = EEPROM.read(addr);
+        if (active == 1) {
+            ctx->portForwards[i].active = true;
+            ctx->portForwards[i].protocol = EEPROM.read(addr + 1);
+            ctx->portForwards[i].externalPort = (EEPROM.read(addr + 2) << 8) | EEPROM.read(addr + 3);
+            ctx->portForwards[i].internalPort = (EEPROM.read(addr + 4) << 8) | EEPROM.read(addr + 5);
+            ctx->portForwards[i].internalIP = IPAddress(
+                EEPROM.read(addr + 6),
+                EEPROM.read(addr + 7),
+                EEPROM.read(addr + 8),
+                EEPROM.read(addr + 9)
+            );
+            NAT_DEBUG_F("NAT: Loaded port forward %d: %s %d -> %s:%d",
+                        i,
+                        ctx->portForwards[i].protocol == PPP_IP_PROTO_TCP ? "TCP" : "UDP",
+                        ctx->portForwards[i].externalPort,
+                        ctx->portForwards[i].internalIP.toString().c_str(),
+                        ctx->portForwards[i].internalPort);
+        } else {
+            ctx->portForwards[i].active = false;
+        }
+    }
 }

@@ -304,6 +304,10 @@ void enterSlipMode() {
 
     slipModeCtx.state = SLIP_MODE_ACTIVE;
 
+    // Load port forwards from EEPROM and start servers
+    loadPortForwards(&natCtx);
+    natStartPortForwardServers(&natCtx);
+
     // Display configuration
     SerialPrintLn("SLIP Gateway Active");
     SerialPrint("  Gateway IP: ");
@@ -484,19 +488,6 @@ void loadSlipSettings() {
         slipModeCtx.config.dnsServer = IPAddress(ip[0], ip[1], ip[2], ip[3]);
     }
 
-    // Load port forwards
-    for (int i = 0; i < NAT_MAX_PORT_FORWARDS; i++) {
-        int addr = SLIP_PORTFWD_BASE + (i * SLIP_PORTFWD_SIZE);
-        uint8_t active = EEPROM.read(addr);
-        if (active == 1) {
-            uint8_t proto = EEPROM.read(addr + 1);
-            uint16_t extPort = (EEPROM.read(addr + 2) << 8) | EEPROM.read(addr + 3);
-            uint16_t intPort = (EEPROM.read(addr + 4) << 8) | EEPROM.read(addr + 5);
-            // Internal IP is assumed to be clientIP for simplicity
-            // Can extend to store full IP if needed
-        }
-    }
-
     slipModeCtx.configChanged = false;
 }
 
@@ -603,27 +594,34 @@ void slipConfigureIP() {
 // ============================================================================
 
 void slipConfigurePortForward() {
-    // Show submenu and wait for selection
+    // Load port forwards from EEPROM
+    loadPortForwards(&natCtx);
+
+    // Show submenu
     SerialPrintLn("\r\n-=-=- Port Forwarding Menu -=-=-");
-    SerialPrintLn("  A) Add Forward");
-    SerialPrintLn("  R) Remove Forward");
-    SerialPrintLn("  L) List Forwards");
-    SerialPrintLn("  B) Back to SLIP Menu");
+    SerialPrintLn("[A]dd Forward");
+    SerialPrintLn("[R]emove Forward");
+    SerialPrintLn("[L]ist Forwards");
+    SerialPrintLn("[B]ack");
     SerialPrintLn();
+    SerialPrint("> ");
 
     showMessage("Port Fwd Menu\nSee serial");
 
-    // Wait for selection
-    String choice = prompt("Select option: ", "");
-    choice.toUpperCase();
+    // Wait for single keypress
+    while (SerialAvailable() == 0) {
+        delay(10);
+    }
+    char chr = SerialRead();
+    SerialPrintLn(chr);  // Echo the character
 
-    if (choice == "A" || choice == "ADD") {
+    if (chr == 'A' || chr == 'a') {
         slipAddPortForward();
     }
-    else if (choice == "R" || choice == "REMOVE") {
+    else if (chr == 'R' || chr == 'r') {
         slipRemovePortForward();
     }
-    else if (choice == "L" || choice == "LIST") {
+    else if (chr == 'L' || chr == 'l') {
         slipListPortForwards();
     }
     else {
@@ -717,6 +715,9 @@ static void slipAddPortForward() {
     int idx = natAddPortForward(&natCtx, proto, extPort, intIP, intPort);
 
     if (idx >= 0) {
+        // Save to EEPROM
+        savePortForwards(&natCtx);
+
         SerialPrintLn("\r\nPort forward added:");
         SerialPrint("  ");
         SerialPrint(protoStr);
@@ -772,18 +773,21 @@ static void slipRemovePortForward() {
     }
 
     SerialPrintLn();
-    String indexPrompt = "Index to remove: ";
-    String indexStr = prompt(indexPrompt, "");
+    SerialPrint("Index to remove (0-7, B=back): ");
 
-    if (indexStr == "") {
-        SerialPrintLn("Canceled");
-        showMessage("Canceled");
-        delay(1000);
+    // Wait for single keypress
+    while (SerialAvailable() == 0) {
+        delay(10);
+    }
+    char chr = SerialRead();
+    SerialPrintLn(chr);  // Echo the character
+
+    if (chr == 'B' || chr == 'b') {
         slipConfigurePortForward();
         return;
     }
 
-    int idx = indexStr.toInt();
+    int idx = chr - '0';
     if (idx < 0 || idx >= NAT_MAX_PORT_FORWARDS || !natCtx.portForwards[idx].active) {
         SerialPrintLn("Invalid index");
         showMessage("Invalid index");
@@ -793,6 +797,10 @@ static void slipRemovePortForward() {
     }
 
     natRemovePortForward(&natCtx, idx);
+
+    // Save to EEPROM
+    savePortForwards(&natCtx);
+
     SerialPrintLn("Port forward removed");
     showMessage("Forward\nremoved!");
     delay(1500);
