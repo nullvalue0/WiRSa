@@ -329,6 +329,225 @@ TELNET bbs.example.com
 2. Select your WiRSa entry
 3. Click "Dial"
 
+### Setting Up SLIP Under Linux
+
+Linux has built-in SLIP support via the `slattach` utility. This guide covers configuring the serial port, enabling SLIP, and testing connectivity.
+
+**Requirements:**
+- Linux system with a physical serial port (directly connected to WiRSa)
+- Root/sudo access
+- `slattach` utility (usually included in `net-tools` or `slip` package)
+
+**Step 1: Identify Your Serial Port**
+
+First, identify the serial device. Physical serial ports are typically:
+```bash
+# First serial port (COM1 equivalent)
+/dev/ttyS0
+
+# Second serial port (COM2 equivalent)
+/dev/ttyS1
+
+# List available serial ports
+ls -la /dev/ttyS*
+
+# Check which serial ports are available
+dmesg | grep -i ttyS
+```
+
+**Step 2: Configure the Serial Port**
+
+Before starting SLIP, configure the serial port to match your WiRSa settings. Use `stty` to set the baud rate and other parameters:
+
+```bash
+# Set baud rate to 115200, 8N1, no flow control
+sudo stty -F /dev/ttyS0 115200 cs8 -cstopb -parenb raw -echo
+
+# For hardware flow control (if WiRSa has AT&K1 enabled), add crtscts:
+sudo stty -F /dev/ttyS0 115200 cs8 -cstopb -parenb raw -echo crtscts
+
+# Verify settings
+stty -F /dev/ttyS0 -a
+```
+
+Key `stty` options:
+| Option | Description |
+|--------|-------------|
+| `115200` | Baud rate (match WiRSa setting) |
+| `cs8` | 8 data bits |
+| `-cstopb` | 1 stop bit (use `cstopb` for 2) |
+| `-parenb` | No parity |
+| `raw` | Raw mode (no input/output processing) |
+| `-echo` | Disable local echo |
+| `crtscts` | Enable hardware flow control |
+
+**Step 3: Test Serial Communication**
+
+Before enabling SLIP, verify you can communicate with the WiRSa:
+
+```bash
+# Open a simple terminal session
+# Press Ctrl+C to exit when done
+sudo cat /dev/ttyS0 &
+echo "AT" | sudo tee /dev/ttyS0
+
+# You should see "OK" response from WiRSa
+# Kill the background cat process
+kill %1
+
+# Alternative: use screen or minicom
+screen /dev/ttyS0 115200
+# (Press Ctrl+A then K to exit screen)
+```
+
+**Step 4: Start SLIP Gateway on WiRSa**
+
+From your terminal session with WiRSa, enter SLIP mode:
+```
+AT$SLIP
+```
+Or dial into SLIP mode:
+```
+ATDT SLIP
+```
+
+You should see "CONNECT SLIP" response. Now exit your terminal program (the serial port must be free for slattach).
+
+**Step 5: Enable SLIP on Linux**
+
+Attach the SLIP interface using `slattach`:
+
+```bash
+# Start slattach in the background
+# -p slip = SLIP protocol
+# -s 115200 = baud rate
+sudo slattach -p slip -s 115200 /dev/ttyS0 &
+
+# Note the PID for later cleanup
+SLATTACH_PID=$!
+```
+
+**Step 6: Configure the Network Interface**
+
+Once slattach is running, a `sl0` interface will be created. Configure it:
+
+```bash
+# Bring up the interface with the client IP
+sudo ifconfig sl0 192.168.7.2 pointopoint 192.168.7.1 up
+
+# Or using ip command (modern systems)
+sudo ip addr add 192.168.7.2 peer 192.168.7.1 dev sl0
+sudo ip link set sl0 up
+
+# Add default route through the SLIP gateway (optional - routes all traffic through WiRSa)
+sudo ip route add default via 192.168.7.1 dev sl0
+
+# Or add only specific routes
+sudo ip route add 8.8.8.8 via 192.168.7.1 dev sl0
+```
+
+**Step 7: Configure DNS**
+
+Add the DNS server to your resolver configuration:
+
+```bash
+# Temporary - add to /etc/resolv.conf
+echo "nameserver 8.8.8.8" | sudo tee -a /etc/resolv.conf
+
+# For systems using systemd-resolved
+sudo resolvectl dns sl0 8.8.8.8
+```
+
+**Step 8: Test the Connection**
+
+Verify connectivity through the SLIP link:
+
+```bash
+# Ping the WiRSa gateway
+ping -c 3 192.168.7.1
+
+# Ping an external IP (Google DNS)
+ping -c 3 8.8.8.8
+
+# Test DNS resolution
+ping -c 3 google.com
+
+# Check routing
+ip route show
+```
+
+Expected output for successful ping:
+```
+PING 192.168.7.1 (192.168.7.1) 56(84) bytes of data.
+64 bytes from 192.168.7.1: icmp_seq=1 ttl=64 time=5.23 ms
+64 bytes from 192.168.7.1: icmp_seq=2 ttl=64 time=4.89 ms
+64 bytes from 192.168.7.1: icmp_seq=3 ttl=64 time=5.01 ms
+```
+
+**Step 9: Cleanup (When Done)**
+
+To disconnect and clean up:
+
+```bash
+# Bring down the interface
+sudo ip link set sl0 down
+
+# Kill slattach
+sudo kill $SLATTACH_PID
+# Or find and kill by name
+sudo killall slattach
+```
+
+**Complete Setup Script**
+
+Here's a complete script to automate the Linux SLIP setup:
+
+```bash
+#!/bin/bash
+# slip-connect.sh - Connect to WiRSa via SLIP
+
+DEVICE="/dev/ttyS0"
+BAUD="115200"
+LOCAL_IP="192.168.7.2"
+GATEWAY_IP="192.168.7.1"
+DNS="8.8.8.8"
+
+# Configure serial port
+sudo stty -F $DEVICE $BAUD cs8 -cstopb -parenb raw -echo
+
+# Start slattach
+sudo slattach -p slip -s $BAUD $DEVICE &
+sleep 2
+
+# Configure interface
+sudo ip addr add $LOCAL_IP peer $GATEWAY_IP dev sl0
+sudo ip link set sl0 up
+
+# Add route for external traffic
+sudo ip route add default via $GATEWAY_IP dev sl0
+
+# Configure DNS
+sudo resolvectl dns sl0 $DNS 2>/dev/null || echo "nameserver $DNS" | sudo tee /etc/resolv.conf
+
+echo "SLIP connection established"
+echo "  Local IP:  $LOCAL_IP"
+echo "  Gateway:   $GATEWAY_IP"
+echo "  DNS:       $DNS"
+echo ""
+echo "Test with: ping 8.8.8.8"
+```
+
+**Troubleshooting**
+
+| Issue | Solution |
+|-------|----------|
+| "Device or resource busy" | Another program is using the serial port. Close any terminal emulators. |
+| No sl0 interface appears | Check if slattach is running: `ps aux \| grep slattach`. Verify WiRSa is in SLIP mode. |
+| Ping to gateway fails | Verify serial settings match WiRSa. Check cable connections. |
+| External pings fail | Ensure WiRSa has WiFi connectivity. Check `AT$SLIPSTAT` for packet statistics. |
+| Permission denied | Use sudo or add your user to the `dialout` group: `sudo usermod -aG dialout $USER` |
+| Serial port not found | Ensure the serial port is enabled in BIOS/UEFI. Check `setserial -g /dev/ttyS*` for port status. |
+
 ### Configuration AT Commands
 
 **SLIP Configuration:**
