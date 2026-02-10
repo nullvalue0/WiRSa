@@ -122,6 +122,33 @@ bool pppNeedsEscape(PppContext* ctx, uint8_t byte) {
 int pppReceiveByte(PppContext* ctx, uint8_t byte) {
     ctx->bytesReceived++;
 
+    // Handle transition from completed frame to next frame.
+    // Per RFC 1662, a single 0x7E flag can end one frame and start the next
+    // ("flag sharing"). After completing a frame, we enter FRAME_DONE state.
+    // The next byte determines what happens:
+    //   - 0x7E: redundant flag (separate flags between frames) - just reset
+    //   - 0x7D: escape char starting a flag-shared frame
+    //   - other: first data byte of a flag-shared frame
+    if (ctx->rxState == PPP_RX_FRAME_DONE) {
+        ctx->rxPos = 0;
+        ctx->rxFcs = PPP_FCS_INIT;
+        if (byte == PPP_FLAG) {
+            // Separate flag between frames - just start fresh
+            ctx->rxState = PPP_RX_RECEIVING;
+            return 0;
+        }
+        // Flag sharing: this byte is the first byte of the next frame
+        ctx->rxState = PPP_RX_RECEIVING;
+        if (byte == PPP_ESCAPE) {
+            ctx->rxState = PPP_RX_ESCAPE;
+            return 0;
+        }
+        // Regular data byte - add to buffer
+        ctx->rxBuffer[ctx->rxPos++] = byte;
+        ctx->rxFcs = pppCalcFcs(ctx->rxFcs, byte);
+        return 0;
+    }
+
     switch (ctx->rxState) {
         case PPP_RX_IDLE:
             // Waiting for frame start
@@ -140,6 +167,7 @@ int pppReceiveByte(PppContext* ctx, uint8_t byte) {
                 if (ctx->rxPos < 4) {
                     // Frame too short (need at least addr+ctrl+proto+fcs)
                     // Could be empty frame delimiter or noise
+                    // Stay in RECEIVING - this flag starts the next frame
                     ctx->rxPos = 0;
                     ctx->rxFcs = PPP_FCS_INIT;
                     return 0;
@@ -148,17 +176,19 @@ int pppReceiveByte(PppContext* ctx, uint8_t byte) {
                 // Check FCS - good FCS after including received FCS bytes
                 // should equal PPP_FCS_GOOD (0xF0B8)
                 if (ctx->rxFcs != PPP_FCS_GOOD) {
-                    // FCS error
+                    // FCS error - use FRAME_DONE so next byte is handled correctly
+                    // (the 0x7E that ended this bad frame may start the next one)
                     ctx->fcsErrors++;
-                    ctx->rxState = PPP_RX_IDLE;
+                    ctx->rxState = PPP_RX_FRAME_DONE;
                     ctx->rxPos = 0;
                     return -1;
                 }
 
                 // Valid frame - remove FCS bytes from count
+                // Use FRAME_DONE state so the next byte handles flag sharing
                 ctx->framesReceived++;
                 int len = ctx->rxPos - 2;  // Exclude 2-byte FCS
-                ctx->rxState = PPP_RX_IDLE;
+                ctx->rxState = PPP_RX_FRAME_DONE;
                 ctx->rxPos = len;  // Update to actual data length
                 return len;
 
@@ -195,6 +225,12 @@ int pppReceiveByte(PppContext* ctx, uint8_t byte) {
                 ctx->rxState = PPP_RX_IDLE;
                 ctx->rxPos = 0;
             }
+            return 0;
+
+        default:
+            // Should not happen - reset to safe state
+            ctx->rxState = PPP_RX_IDLE;
+            ctx->rxPos = 0;
             return 0;
     }
 

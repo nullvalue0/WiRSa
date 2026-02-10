@@ -294,8 +294,16 @@ static void pppActiveLoop() {
             // Complete PPP frame received
             pppProcessFrame();
         } else if (frameLen < 0) {
-            // FCS error
-            if (usbDebug) UsbDebugPrintLn("PPP: FCS error");
+            // FCS error - log protocol bytes for diagnosis
+            if (usbDebug) {
+                UsbDebugPrint("");
+                Serial.printf("PPP: FCS error (rxPos=%d, bytes:", pppCtx.rxPos);
+                int dumpLen = (pppCtx.rxPos > 16) ? 16 : pppCtx.rxPos;
+                for (int i = 0; i < dumpLen; i++) {
+                    Serial.printf(" %02X", pppCtx.rxBuffer[i]);
+                }
+                Serial.printf(")\r\n");
+            }
         }
     }
 
@@ -382,6 +390,25 @@ static void pppActiveLoop() {
         if (now - pppModeCtx.lastCleanup > 10000) {
             pppNatCleanupExpired(&pppNatCtx);
             pppModeCtx.lastCleanup = now;
+
+            // Diagnostic: show PPP and ICMP stats
+            if (usbDebug) {
+                UsbDebugPrint("");
+                Serial.printf("PPP stats: framesRx=%u framesTx=%u fcsErr=%u rxErr=%u\r\n",
+                    pppCtx.framesReceived, pppCtx.framesSent,
+                    pppCtx.fcsErrors, pppCtx.rxErrors);
+
+                extern volatile uint32_t g_icmpCallbackCount;
+                extern volatile uint32_t g_icmpCallbackStored;
+                extern volatile uint32_t g_icmpCallbackDropped;
+                extern volatile uint32_t g_icmpProcessedCount;
+                if (g_icmpCallbackCount > 0) {
+                    UsbDebugPrint("");
+                    Serial.printf("ICMP stats: callback=%u stored=%u dropped=%u processed=%u\r\n",
+                        g_icmpCallbackCount, g_icmpCallbackStored,
+                        g_icmpCallbackDropped, g_icmpProcessedCount);
+                }
+            }
         }
     }
 
@@ -422,12 +449,45 @@ static void pppProcessFrame() {
                 lcpOpen(&lcpCtx, &pppCtx);
             }
             lcpProcessPacket(&lcpCtx, &pppCtx, payload, payloadLen);
+
+            // Immediately check if LCP just opened - don't wait for 100ms timer!
+            // Without this, IPCP packets from fast peers (e.g. Linux pppd) arrive
+            // while we're still in PPP_MODE_LCP and get silently dropped, causing
+            // an infinite IPCP negotiation loop.
+            if (pppModeCtx.state == PPP_MODE_LCP && lcpIsOpened(&lcpCtx)) {
+                pppModeCtx.state = PPP_MODE_IPCP;
+                ipcpOpen(&ipcpCtx, &pppCtx);
+                SerialPrintLn("LCP opened, starting IPCP...");
+            }
             break;
 
         case PPP_PROTO_IPCP:
-            // IPCP packet
+            // If LCP is open but we haven't transitioned yet, do it now
+            if (pppModeCtx.state == PPP_MODE_LCP && lcpIsOpened(&lcpCtx)) {
+                pppModeCtx.state = PPP_MODE_IPCP;
+                ipcpOpen(&ipcpCtx, &pppCtx);
+                SerialPrintLn("LCP opened (triggered by IPCP rx), starting IPCP...");
+            }
             if (pppModeCtx.state == PPP_MODE_IPCP || pppModeCtx.state == PPP_MODE_ACTIVE) {
                 ipcpProcessPacket(&ipcpCtx, &pppCtx, payload, payloadLen);
+
+                // Immediately check if IPCP just opened - same principle as LCP above
+                if (pppModeCtx.state == PPP_MODE_IPCP && ipcpIsOpened(&ipcpCtx)) {
+                    pppModeCtx.state = PPP_MODE_ACTIVE;
+                    SerialPrintLn("PPP Gateway ACTIVE");
+                    SerialPrint("  Client IP: ");
+                    SerialPrintLn(ipToString(ipcpCtx.peerIP));
+
+                    pppNatSetIPs(&pppNatCtx, ipcpCtx.ourIP, ipcpCtx.peerIP,
+                                 IPAddress(255, 255, 255, 0), ipcpCtx.primaryDns);
+                    pppNatStartPortForwardServers(&pppNatCtx);
+                }
+            } else {
+                if (usbDebug) {
+                    UsbDebugPrint("");
+                    Serial.printf("IPCP packet DROPPED: pppMode=%d (need IPCP=%d or ACTIVE=%d)\r\n",
+                        pppModeCtx.state, PPP_MODE_IPCP, PPP_MODE_ACTIVE);
+                }
             }
             break;
 

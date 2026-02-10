@@ -584,7 +584,7 @@ static void natProcessUdp(NatContext* ctx, uint8_t* packet, uint16_t length,
 // ============================================================================
 
 static struct {
-    bool pending;
+    volatile bool pending;  // volatile: written by lwIP callback (Core 0), read by main loop (Core 1)
     IPAddress srcIP;
     uint16_t id;
     uint16_t seq;
@@ -630,7 +630,6 @@ static u8_t natIcmpRecvCallback(void* arg, struct raw_pcb* pcb,
 
     // Store reply info for deferred processing
     if (!g_pendingIcmpReply.pending) {
-        g_pendingIcmpReply.pending = true;
         g_pendingIcmpReply.srcIP = srcIP;
         g_pendingIcmpReply.id = icmpId;
         g_pendingIcmpReply.seq = icmpSeq;
@@ -644,9 +643,14 @@ static u8_t natIcmpRecvCallback(void* arg, struct raw_pcb* pcb,
         if (payloadLen > 0) {
             pbuf_copy_partial(p, g_pendingIcmpReply.data, payloadLen, ipHeaderLen + 8);
         }
+        g_pendingIcmpReply.pending = true;  // Set AFTER all fields populated (volatile ordering)
     }
 
-    return 1;  // Consume packet
+    // CRITICAL: Must free pbuf when returning 1 (consumed).
+    // lwIP raw_recv contract: callback owns the pbuf when it returns non-zero.
+    // Missing this causes progressive memory leak that exhausts lwIP pbuf pool.
+    pbuf_free(p);
+    return 1;  // Consumed - we handle all echo replies
 }
 
 // ============================================================================

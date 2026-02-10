@@ -434,23 +434,27 @@ static void ipcpHandleConfigRequest(IpcpContext* ctx, PppContext* ppp,
 static void ipcpHandleConfigAck(IpcpContext* ctx, PppContext* ppp,
                                  uint8_t id, uint8_t* options, uint16_t optLen) {
     if (id != ctx->identifier) {
-        IPCP_DEBUG_F("IPCP: Ignoring Configure-Ack with wrong id=%d\n", id);
+        IPCP_DEBUG_F("IPCP: Ignoring Configure-Ack with wrong id=%d (expected %d)", id, ctx->identifier);
         return;
     }
 
     ctx->configRetries = 0;
 
+    IPCP_DEBUG_F("IPCP: Configure-Ack accepted id=%d, state=%d", id, ctx->state);
+
     switch (ctx->state) {
         case IPCP_STATE_REQ_SENT:
             ctx->state = IPCP_STATE_ACK_RCVD;
+            IPCP_DEBUG_F("IPCP: State -> ACK_RCVD");
             break;
         case IPCP_STATE_ACK_SENT:
             ctx->state = IPCP_STATE_OPENED;
-            IPCP_DEBUG_F("IPCP: OPENED! Client IP=%d.%d.%d.%d\n",
+            IPCP_DEBUG_F("IPCP: OPENED! Client IP=%d.%d.%d.%d",
                          ctx->peerIP[0], ctx->peerIP[1],
                          ctx->peerIP[2], ctx->peerIP[3]);
             break;
         default:
+            IPCP_DEBUG_F("IPCP: Config-Ack in unexpected state %d - ignored", ctx->state);
             break;
     }
 }
@@ -562,7 +566,8 @@ void ipcpProcessPacket(IpcpContext* ctx, PppContext* ppp,
     uint8_t* options = &data[4];
     uint16_t optLen = pktLen - 4;
 
-    IPCP_DEBUG_F("IPCP: Received code=%d id=%d len=%d\n", code, id, pktLen);
+    IPCP_DEBUG_F("IPCP: Received code=%d id=%d len=%d (state=%s, ourId=%d)",
+                 code, id, pktLen, ipcpStateName(ctx->state), ctx->identifier);
 
     switch (code) {
         case IPCP_CONFIGURE_REQUEST:

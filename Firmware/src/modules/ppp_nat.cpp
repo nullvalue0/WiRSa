@@ -862,9 +862,15 @@ static void pppNatSendIcmpToClient(PppNatContext* ctx, PppContext* ppp,
 // ICMP Raw Socket Receive Callback
 // ============================================================================
 
+// ICMP diagnostic counters (volatile: updated from lwIP callback on Core 0)
+volatile uint32_t g_icmpCallbackCount = 0;    // Total callback invocations (echo replies)
+volatile uint32_t g_icmpCallbackStored = 0;   // Successfully stored in pending buffer
+volatile uint32_t g_icmpCallbackDropped = 0;  // Dropped (pending buffer busy)
+volatile uint32_t g_icmpProcessedCount = 0;   // Processed by main loop
+
 // Pending ICMP reply buffer (for deferred processing from callback)
 static struct {
-    bool pending;
+    volatile bool pending;  // volatile: written by lwIP callback (Core 0), read by main loop (Core 1)
     IPAddress srcIP;
     uint16_t id;
     uint16_t seq;
@@ -905,9 +911,10 @@ static u8_t pppNatIcmpRecvCallback(void* arg, struct raw_pcb* pcb,
     IPAddress srcIP((ip4->addr >> 0) & 0xFF, (ip4->addr >> 8) & 0xFF,
                     (ip4->addr >> 16) & 0xFF, (ip4->addr >> 24) & 0xFF);
 
+    g_icmpCallbackCount++;
+
     // Store reply info for deferred processing (can't call pppSendFrame from callback)
     if (!g_pendingIcmpReply.pending) {
-        g_pendingIcmpReply.pending = true;
         g_pendingIcmpReply.srcIP = srcIP;
         g_pendingIcmpReply.id = icmpId;
         g_pendingIcmpReply.seq = icmpSeq;
@@ -921,9 +928,17 @@ static u8_t pppNatIcmpRecvCallback(void* arg, struct raw_pcb* pcb,
         if (payloadLen > 0) {
             pbuf_copy_partial(p, g_pendingIcmpReply.data, payloadLen, ipHeaderLen + 8);
         }
+        g_pendingIcmpReply.pending = true;  // Set AFTER all fields populated (volatile ordering)
+        g_icmpCallbackStored++;
+    } else {
+        g_icmpCallbackDropped++;
     }
 
-    return 1;  // Consume packet
+    // CRITICAL: Must free pbuf when returning 1 (consumed).
+    // lwIP raw_recv contract: callback owns the pbuf when it returns non-zero.
+    // Missing this causes progressive memory leak that exhausts lwIP pbuf pool.
+    pbuf_free(p);
+    return 1;  // Consumed - we handle all echo replies
 }
 
 // Process pending ICMP reply (called from main loop context)
@@ -965,6 +980,7 @@ void pppNatProcessPendingIcmp(PppNatContext* ctx, PppContext* ppp) {
     NAT_DEBUG_F("NAT: Forwarded ping reply to client, %d bytes payload",
                 g_pendingIcmpReply.dataLen);
     ctx->icmpPackets++;
+    g_icmpProcessedCount++;
 
     // Mark entry inactive after reply
     entry->active = false;

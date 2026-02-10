@@ -41,7 +41,8 @@
 enum PppRxState {
     PPP_RX_IDLE,        // Waiting for frame start (flag)
     PPP_RX_RECEIVING,   // Receiving frame data
-    PPP_RX_ESCAPE       // Just received escape character
+    PPP_RX_ESCAPE,      // Just received escape character
+    PPP_RX_FRAME_DONE   // Frame complete, caller processing it
 };
 
 // ============================================================================
