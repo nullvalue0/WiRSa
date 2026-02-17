@@ -13,6 +13,8 @@ void showWifiIcon();
 int getSignalBars();  // Returns 0-4 based on WiFi RSSI
 void setBaudRate(int inSpeed);
 void setCarrier(byte carrier);
+void setDSR(byte dsr);
+void setRI(byte ri);
 void showCallIcon();
 
 #endif // NETWORK_H

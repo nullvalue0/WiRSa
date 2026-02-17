@@ -40,6 +40,11 @@
  **************************************************************************/
 
  /*
+ changes 3.08
+ - fixed wifi password entry via screen/buttons
+ - implemented AT&D0-3 (DTR control)
+ - DSR and RI pins now driven as outputs per RS-232 standard
+ 
  changes 3.07
  - SLIP/PPP modes bug fixes for linux compatibility (slattach, pppd)
 
@@ -143,9 +148,9 @@
 #define RTS_PIN 15         // RTS Request to Send, connect to host's CTS pin
 #define CTS_PIN 27         // CTS Clear to Send, connect to host's RTS pin
 
-#define DTR_PIN 4          // DTR Data Terminal Ready (not yet implemented)
-#define DSR_PIN 26         // DSR Data Set Ready (not yet implemented)
-#define RI_PIN  25         // RI Ring Indicator (not yet implemented)
+#define DTR_PIN 4          // DTR Data Terminal Ready
+#define DSR_PIN 26         // DSR Data Set Ready
+#define RI_PIN  25         // RI Ring Indicator
 
 #define SW1_PIN 36         //DOWN
 #define SW2_PIN 39         //BACK
@@ -266,7 +271,7 @@ const uint32_t crc32tab[256] PROGMEM = {
 
 
 // Global variables
-String build = "v3.07";
+String build = "v3.08";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -322,6 +327,7 @@ byte flowControl = F_NONE;      // Use flow control
 bool txPaused = false;          // Has flow control asked us to pause?
 enum pinPolarity_t { P_INVERTED, P_NORMAL }; // Is LOW (0) or HIGH (1) active?
 byte pinPolarity = P_INVERTED;
+byte dtrMode = 0;                // DTR handling: 0=ignore, 1=cmd mode, 2=hang up
 enum dispOrientation_t { D_NORMAL, D_FLIPPED }; // Normal or Flipped
 byte dispOrientation = D_NORMAL;
 enum defaultMode_t { D_MAINMENU, D_MODEMMENU }; // Main or Modem
@@ -497,6 +503,12 @@ bool refreshDisplay(void* argument);
 // - resetGlobals(), checkCancel(), clearInputBuffer(), SerialWriteLog(), addLog(), sendStartByte()
 
 void setup() {
+  // GPIO 15 (RTS) is an ESP32 strapping pin. If an external RS232 device
+  // pulls it LOW during boot, the ESP32 can hang. Configure it as OUTPUT
+  // HIGH immediately, before any delays or peripheral init.
+  pinMode(RTS_PIN, OUTPUT);
+  digitalWrite(RTS_PIN, HIGH);
+
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println(F("SSD1306 allocation failed"));
@@ -528,9 +540,14 @@ void setup() {
   digitalWrite(RTS_PIN, HIGH); // ready to receive data
   pinMode(CTS_PIN, INPUT);
   digitalWrite(CTS_PIN, HIGH); // pull up
+  pinMode(DTR_PIN, INPUT);
+  pinMode(DSR_PIN, OUTPUT);
+  pinMode(RI_PIN, OUTPUT);
   //end flow control
 
   setCarrier(false);
+  setDSR(false);
+  setRI(false);
 
   EEPROM.begin(LAST_ADDRESS + 1);
   delay(10);

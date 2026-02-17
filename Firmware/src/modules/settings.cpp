@@ -20,6 +20,7 @@
 #define PET_TRANSLATE_ADDRESS 118
 #define FLOW_CONTROL_ADDRESS 119
 #define PIN_POLARITY_ADDRESS 120
+#define DTR_MODE_ADDRESS 121
 #define DIAL0_ADDRESS   200
 #define DIAL1_ADDRESS   250
 #define DIAL2_ADDRESS   300
@@ -43,7 +44,7 @@ extern String ssid, password, busyMsg;
 extern byte serialSpeed, serialConfig;
 extern bool echo, autoAnswer, telnet, verboseResults, petTranslate;
 extern int tcpServerPort;
-extern byte flowControl, pinPolarity, dispOrientation, defaultMode;
+extern byte flowControl, pinPolarity, dtrMode, dispOrientation, defaultMode;
 extern bool usbDebug;
 extern String speedDials[10];
 extern const int speedDialAddresses[];
@@ -63,6 +64,7 @@ void writeSettings() {
   EEPROM.write(PET_TRANSLATE_ADDRESS, byte(petTranslate));
   EEPROM.write(FLOW_CONTROL_ADDRESS, byte(flowControl));
   EEPROM.write(PIN_POLARITY_ADDRESS, byte(pinPolarity));
+  EEPROM.write(DTR_MODE_ADDRESS, byte(dtrMode));
   EEPROM.write(ORIENTATION_ADDRESS, byte(dispOrientation));
   EEPROM.write(DEFAULTMODE_ADDRESS, byte(defaultMode));
   EEPROM.write(SERIALCONFIG_ADDRESS, serialConfig);
@@ -88,6 +90,7 @@ void readSettings() {
   petTranslate = EEPROM.read(PET_TRANSLATE_ADDRESS);
   flowControl = EEPROM.read(FLOW_CONTROL_ADDRESS);
   pinPolarity = EEPROM.read(PIN_POLARITY_ADDRESS);
+  dtrMode = EEPROM.read(DTR_MODE_ADDRESS);
   dispOrientation = EEPROM.read(ORIENTATION_ADDRESS);
   defaultMode = EEPROM.read(DEFAULTMODE_ADDRESS);
   serialConfig = EEPROM.read(SERIALCONFIG_ADDRESS);
@@ -116,6 +119,7 @@ void defaultEEPROM() {
   EEPROM.write(PET_TRANSLATE_ADDRESS, 0x00);
   EEPROM.write(FLOW_CONTROL_ADDRESS, 0x00);
   EEPROM.write(PIN_POLARITY_ADDRESS, 0x01);
+  EEPROM.write(DTR_MODE_ADDRESS, 0x00);
   EEPROM.write(SERIALCONFIG_ADDRESS, 0x03); //8-N-1
 
   setEEPROM("bbs.fozztexx.com:23", speedDialAddresses[0], 50);

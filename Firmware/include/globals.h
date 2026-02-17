@@ -93,6 +93,7 @@
 #define PET_TRANSLATE_ADDRESS 118
 #define FLOW_CONTROL_ADDRESS 119
 #define PIN_POLARITY_ADDRESS 120
+#define DTR_MODE_ADDRESS 121
 #define DIAL0_ADDRESS   200
 #define DIAL1_ADDRESS   250
 #define DIAL2_ADDRESS   300
@@ -278,6 +279,7 @@ extern bool echo;
 extern bool autoAnswer;
 extern byte flowControl;
 extern byte pinPolarity;
+extern byte dtrMode;
 extern bool petTranslate;
 extern unsigned long connectTime;
 extern bool txPaused;

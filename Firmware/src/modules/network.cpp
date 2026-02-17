@@ -7,6 +7,8 @@
 #define DCD_PIN 33
 #define RTS_PIN 15
 #define CTS_PIN 27
+#define DSR_PIN 26
+#define RI_PIN  25
 #define RXD2 16
 #define TXD2 17
 
@@ -215,6 +217,16 @@ void setCarrier(byte carrier) {
   if (pinPolarity == P_NORMAL) carrier = !carrier;
   digitalWrite(DCD_PIN, carrier);
   showCallIcon();
+}
+
+void setDSR(byte dsr) {
+  if (pinPolarity == P_NORMAL) dsr = !dsr;
+  digitalWrite(DSR_PIN, dsr);
+}
+
+void setRI(byte ri) {
+  if (pinPolarity == P_NORMAL) ri = !ri;
+  digitalWrite(RI_PIN, ri);
 }
 
 void showCallIcon() {

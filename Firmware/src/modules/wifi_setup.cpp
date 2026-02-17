@@ -194,9 +194,11 @@ void wifiPasswordMenu() {
   }
 
   // Instructions at bottom
-  display.setCursor(3, 55);
+  display.setCursor(3, 49);
   display.setTextSize(1);
-  display.print("UP/DN:chr EN:add BK:del");
+  display.print("UD:chr EN:add BK:del");
+  display.setCursor(3, 57);
+  display.print("Hold EN to connect");
 
   display.display();
 }
@@ -333,9 +335,16 @@ static unsigned long btnHoldStart = 0;
 static unsigned long lastRepeat = 0;
 static bool btnWasPressed = false;
 
+// Enter long-press timing
+static unsigned long enterHoldStart = 0;
+static bool enterWasPressed = false;
+static unsigned long enterReleaseTime = 0; // Debounce: when ENTER was last released
+
 // Auto-repeat constants
 #define REPEAT_DELAY 400    // Initial delay before repeat starts (ms)
-#define REPEAT_RATE 50      // Rate of repeat while held (ms)
+#define REPEAT_RATE 80      // Rate of repeat while held (ms)
+#define LONG_PRESS_MS 1000  // Hold ENTER for 1 second to submit password
+#define ENTER_DEBOUNCE_MS 150 // Debounce time after ENTER release
 
 void wifiPasswordLoop() {
   readSwitches();
@@ -365,21 +374,21 @@ void wifiPasswordLoop() {
 
     if (shouldUpdate) {
       if (BTNUP) {
-        // Next character in set
-        const char* pos = strchr(CHAR_SET, wifiSetupCtx.currentChar);
-        if (pos) {
-          int idx = pos - CHAR_SET;
-          idx = (idx + 1) % CHAR_SET_LEN;
-          wifiSetupCtx.currentChar = CHAR_SET[idx];
-        } else {
-          wifiSetupCtx.currentChar = 'a';
-        }
-      } else {
         // Previous character in set
         const char* pos = strchr(CHAR_SET, wifiSetupCtx.currentChar);
         if (pos) {
           int idx = pos - CHAR_SET;
           idx = (idx - 1 + CHAR_SET_LEN) % CHAR_SET_LEN;
+          wifiSetupCtx.currentChar = CHAR_SET[idx];
+        } else {
+          wifiSetupCtx.currentChar = 'a';
+        }
+      } else {
+        // Next character in set
+        const char* pos = strchr(CHAR_SET, wifiSetupCtx.currentChar);
+        if (pos) {
+          int idx = pos - CHAR_SET;
+          idx = (idx + 1) % CHAR_SET_LEN;
           wifiSetupCtx.currentChar = CHAR_SET[idx];
         } else {
           wifiSetupCtx.currentChar = 'a';
@@ -393,16 +402,64 @@ void wifiPasswordLoop() {
   }
 
   if (BTNEN) {
-    // Add current character to password
+    if (!enterWasPressed) {
+      // First detection of ENTER press - start timing (with debounce check)
+      if (millis() - enterReleaseTime >= ENTER_DEBOUNCE_MS) {
+        enterHoldStart = millis();
+        enterWasPressed = true;
+      }
+    } else if (millis() - enterHoldStart >= LONG_PRESS_MS) {
+      // Long press threshold reached - submit password immediately
+      enterWasPressed = false;
+
+      // Include the currently displayed character in the password
+      if (wifiSetupCtx.passwordPos < WIFI_PASSWORD_MAX) {
+        wifiSetupCtx.tempPassword[wifiSetupCtx.passwordPos] = wifiSetupCtx.currentChar;
+        wifiSetupCtx.passwordPos++;
+        wifiSetupCtx.tempPassword[wifiSetupCtx.passwordPos] = '\0';
+      }
+
+      SerialPrintLn("\r\n\r\nConnecting to: " + wifiSetupCtx.selectedSSID);
+      showMessage("Connecting\nto network\n\nPlease wait...");
+
+      if (wifiTestConnection(wifiSetupCtx.selectedSSID.c_str(), wifiSetupCtx.tempPassword)) {
+        wifiSaveCredentials(wifiSetupCtx.selectedSSID.c_str(), wifiSetupCtx.tempPassword);
+        wifiShowConnectionInfo();
+        SerialPrintLn("\r\nPress any key to continue...");
+      } else {
+        showMessage("Connection\nfailed!\n\nWrong password?");
+        SerialPrintLn("\r\nConnection failed. Wrong password?");
+      }
+
+      delay(200);
+      waitSwitches(); // Clear any held buttons before waiting for keypress
+      while (!BTNEN && !BTNBK && SerialAvailable() == 0) {
+        readSwitches();
+        delay(50);
+      }
+      waitSwitches();
+      while (SerialAvailable()) SerialRead();
+      settingsMenu(false);
+      return;
+    } else if (millis() - enterHoldStart > 300) {
+      // Visual feedback - show they're holding
+      display.fillRect(1, 49, 125, 14, SSD1306_BLACK);
+      display.setCursor(3, 53);
+      display.print("Connecting...");
+      display.display();
+    }
+  }
+  else if (enterWasPressed) {
+    // ENTER released before long press - short press, add character
+    enterWasPressed = false;
+    enterReleaseTime = millis(); // Record release time for debounce
     if (wifiSetupCtx.passwordPos < WIFI_PASSWORD_MAX) {
       wifiSetupCtx.tempPassword[wifiSetupCtx.passwordPos] = wifiSetupCtx.currentChar;
       wifiSetupCtx.passwordPos++;
       wifiSetupCtx.tempPassword[wifiSetupCtx.passwordPos] = '\0';
-      // Echo the added character to serial
       SerialPrint(String(wifiSetupCtx.currentChar));
     }
     wifiPasswordMenu();
-    waitSwitches();
   }
   else if (BTNBK) {
     // Delete last character or go back

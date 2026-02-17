@@ -22,6 +22,9 @@
 #include <arduino-timer.h>
 #include "SD.h"
 
+// RI pulse timer - tracks when RI was asserted so modemLoop can de-assert after 1 second
+static unsigned long riTime = 0;
+
 // External global variables
 extern String cmd;
 extern bool cmdMode;
@@ -226,6 +229,7 @@ void displayHelp() {
   SerialPrintLn("                 192,384,576,1152)*100"); yield();
   SerialPrintLn("SET PORT.......: AT$SP=PORT"); yield();
   SerialPrintLn("FLOW CONTROL...: AT&KN (N=0/N,1/HW,2/SW)"); yield();
+  SerialPrintLn("DTR HANDLING...: AT&DN (N=0/IGN,1/CMD,2/HUP,3/RST)"); yield();
   SerialPrintLn("WIFI OFF/ON....: ATC0 / ATC1"); yield();
   SerialPrintLn("HANGUP.........: ATH"); yield();
   SerialPrintLn("ENTER CMD MODE.: +++"); yield();
@@ -250,6 +254,7 @@ void displayCurrentSettings() {
   SerialPrint("V"); SerialPrint(verboseResults); SerialPrint(" "); yield();
   SerialPrint("&K"); SerialPrint(flowControl); SerialPrint(" "); yield();
   SerialPrint("&P"); SerialPrint(pinPolarity); SerialPrint(" "); yield();
+  SerialPrint("&D"); SerialPrint(dtrMode); SerialPrint(" "); yield();
   SerialPrint("NET"); SerialPrint(telnet); SerialPrint(" "); yield();
   SerialPrint("PET"); SerialPrint(petTranslate); SerialPrint(" "); yield();
   SerialPrint("S0:"); SerialPrint(autoAnswer); SerialPrint(" "); yield();
@@ -277,6 +282,7 @@ void displayStoredSettings() {
   SerialPrint("V"); SerialPrint(EEPROM.read(VERBOSE_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("&K"); SerialPrint(EEPROM.read(FLOW_CONTROL_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("&P"); SerialPrint(EEPROM.read(PIN_POLARITY_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("&D"); SerialPrint(EEPROM.read(DTR_MODE_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("NET"); SerialPrint(EEPROM.read(TELNET_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("PET"); SerialPrint(EEPROM.read(PET_TRANSLATE_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("S0:"); SerialPrint(EEPROM.read(AUTO_ANSWER_ADDRESS)); SerialPrint(" "); yield();
@@ -310,6 +316,8 @@ void answerCall() {
   tcpClient = tcpServer.available();
   tcpClient.setNoDelay(true); // try to disable naggle
   //tcpServer.stop();
+  setRI(false);
+  riTime = 0;
   sendResult(R_CONNECT);
   connectTime = millis();
   cmdMode = false;
@@ -320,6 +328,13 @@ void answerCall() {
 
 // Handle incoming TCP connection
 void handleIncomingConnection() {
+  // If DTR handling is active and DTR is low, reject all incoming connections
+  if (dtrMode > 0 && digitalRead(DTR_PIN) == LOW) {
+    WiFiClient rejected = tcpServer.available();
+    rejected.stop();
+    return;
+  }
+
   // If we already have an active call, reject with busy message
   if (callConnected == 1) {
     ringCount = lastRingMs = 0;
@@ -378,6 +393,8 @@ void handleIncomingConnection() {
     if (millis() - lastRingMs > 6000 || lastRingMs == 0) {
       lastRingMs = millis();
       sendResult(R_RING);
+      setRI(true);
+      riTime = millis();
       ringCount++;
     }
     return;
@@ -411,6 +428,8 @@ void hangUp() {
   tcpClient.stop();
   callConnected = false;
   setCarrier(callConnected);
+  setRI(false);
+  riTime = 0;
   sendResult(R_NOCARRIER);
   connectTime = 0;
 }
@@ -648,11 +667,15 @@ void command()
       pinPolarity = P_INVERTED;
       sendResult(R_OK_STAT);
       setCarrier(callConnected);
+      setDSR(menuMode == MODE_MODEM && WiFi.status() == WL_CONNECTED);
+      setRI(false);
     }
     else if (upCmd.substring(4, 5) == "1") {
       pinPolarity = P_NORMAL;
       sendResult(R_OK_STAT);
       setCarrier(callConnected);
+      setDSR(menuMode == MODE_MODEM && WiFi.status() == WL_CONNECTED);
+      setRI(false);
     }
     else {
       sendResult(R_ERROR);
@@ -675,6 +698,33 @@ void command()
     }
     else if (upCmd.substring(4, 5) == "2") {
       flowControl = 2;
+      sendResult(R_OK_STAT);
+    }
+    else {
+      sendResult(R_ERROR);
+    }
+  }
+
+  /**** Control DTR handling ****/
+  else if (upCmd.indexOf("AT&D") == 0) {
+    if (upCmd.substring(4, 5) == "?") {
+      sendString(String(dtrMode));
+      sendResult(R_OK_STAT);
+    }
+    else if (upCmd.substring(4, 5) == "0") {
+      dtrMode = 0;
+      sendResult(R_OK_STAT);
+    }
+    else if (upCmd.substring(4, 5) == "1") {
+      dtrMode = 1;
+      sendResult(R_OK_STAT);
+    }
+    else if (upCmd.substring(4, 5) == "2") {
+      dtrMode = 2;
+      sendResult(R_OK_STAT);
+    }
+    else if (upCmd.substring(4, 5) == "3") {
+      dtrMode = 3;
       sendResult(R_OK_STAT);
     }
     else {
@@ -1024,11 +1074,14 @@ void enterModemMode()
         if (consoleConnected) {
             SerialPrintLn("Console session preserved");
         }
+        modemConnected();
+        showWifiIcon();
     } else {
         WiFi.mode(WIFI_STA);
         connectWiFi();
     }
     sendResult(R_OK_STAT);
+    setDSR(WiFi.status() == WL_CONNECTED);
 
     digitalWrite(LED_PIN, LOW); // on
 
@@ -1681,8 +1734,34 @@ void modemLoop()
 {
   modem_timer.tick();
 
+  // De-assert RI after 1 second pulse
+  if (riTime > 0 && millis() - riTime > 1000) {
+    setRI(false);
+    riTime = 0;
+  }
+
   // Check flow control
   handleFlowControl();
+
+  // DTR monitoring
+  if (dtrMode > 0) {
+    static bool lastDTR = true;  // assume DTR starts high
+    bool currentDTR = digitalRead(DTR_PIN);
+
+    if (lastDTR && !currentDTR) {
+      // DTR fell - falling edge
+      if (dtrMode == 3) {
+        if (callConnected) hangUp();
+        readSettings();
+      } else if (dtrMode == 2 && callConnected) {
+        hangUp();
+      } else if (dtrMode == 1 && callConnected && !cmdMode) {
+        cmdMode = true;
+        sendResult(R_OK_STAT);
+      }
+    }
+    lastDTR = currentDTR;
+  }
 
   // Service the Web server
   webServer.handleClient();
@@ -1745,9 +1824,12 @@ void modemLoop()
     modem_timer.every(250, refreshDisplay);
   } else if (BTNBK) { //BACK
     //if in a call, first back push ends call, 2nd exits modem mode
-    if (cmdMode==true)
+    if (cmdMode==true) {
+      setDSR(false);
+      setRI(false);
+      riTime = 0;
       mainMenu(false);
-    else {
+    } else {
       hangUp();
       cmdMode = true;
       msgFlag=true; //force full menu redraw
