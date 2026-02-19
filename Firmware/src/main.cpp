@@ -40,6 +40,10 @@
  **************************************************************************/
 
  /*
+ changes 3.09
+ - when S0=1 (auto-answer), telnet goes to RING/CONNECT/DCD
+ - added ATQ0/ATQ1 and ATS2=N commands
+
  changes 3.08
  - fixed wifi password entry via screen/buttons
  - implemented AT&D0-3 (DTR control)
@@ -271,7 +275,7 @@ const uint32_t crc32tab[256] PROGMEM = {
 
 
 // Global variables
-String build = "v3.08";
+String build = "v3.09";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -315,6 +319,8 @@ String diagnosticsMenuDisp[] = { "BACK", "Auto-Detect Baud", "Hex Dump Mode", "L
 
 bool echo = true;
 bool autoAnswer = false;
+bool quietMode = false;        // ATQ1 suppresses result codes
+byte escChar = '+';            // ATS2 escape character (255=disabled)
 String ssid, password, busyMsg;
 byte ringCount = 0;
 String resultCodes[] = { "OK", "CONNECT", "RING", "NO CARRIER", "ERROR", "", "NO DIALTONE", "BUSY", "NO ANSWER" };

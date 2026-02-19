@@ -37,12 +37,15 @@
 #define DEFAULTMODE_ADDRESS 790
 #define SERIALCONFIG_ADDRESS 791
 #define USB_DEBUG_ADDRESS 792
+#define QUIET_MODE_ADDRESS 793
+#define ESC_CHAR_ADDRESS 794
 #define LISTEN_PORT 23
 
 // Global variables (defined in main.cpp)
 extern String ssid, password, busyMsg;
 extern byte serialSpeed, serialConfig;
-extern bool echo, autoAnswer, telnet, verboseResults, petTranslate;
+extern bool echo, autoAnswer, telnet, verboseResults, petTranslate, quietMode;
+extern byte escChar;
 extern int tcpServerPort;
 extern byte flowControl, pinPolarity, dtrMode, dispOrientation, defaultMode;
 extern bool usbDebug;
@@ -69,6 +72,8 @@ void writeSettings() {
   EEPROM.write(DEFAULTMODE_ADDRESS, byte(defaultMode));
   EEPROM.write(SERIALCONFIG_ADDRESS, serialConfig);
   EEPROM.write(USB_DEBUG_ADDRESS, byte(usbDebug));
+  EEPROM.write(QUIET_MODE_ADDRESS, byte(quietMode));
+  EEPROM.write(ESC_CHAR_ADDRESS, escChar);
 
   for (int i = 0; i < 10; i++) {
     setEEPROM(speedDials[i], speedDialAddresses[i], 50);
@@ -95,6 +100,8 @@ void readSettings() {
   defaultMode = EEPROM.read(DEFAULTMODE_ADDRESS);
   serialConfig = EEPROM.read(SERIALCONFIG_ADDRESS);
   usbDebug = EEPROM.read(USB_DEBUG_ADDRESS);
+  quietMode = EEPROM.read(QUIET_MODE_ADDRESS);
+  escChar = EEPROM.read(ESC_CHAR_ADDRESS);
 
   for (int i = 0; i < 10; i++) {
     speedDials[i] = getEEPROM(speedDialAddresses[i], 50);
@@ -138,6 +145,8 @@ void defaultEEPROM() {
   EEPROM.write(ORIENTATION_ADDRESS, 0x00);
   EEPROM.write(DEFAULTMODE_ADDRESS, 0x00);
   EEPROM.write(USB_DEBUG_ADDRESS, 0x01);  // USB debug enabled by default
+  EEPROM.write(QUIET_MODE_ADDRESS, 0x00); // Quiet mode off by default
+  EEPROM.write(ESC_CHAR_ADDRESS, '+');    // Default escape char is '+'
 
   // SLIP Gateway defaults (addresses 800-880)
   // Gateway IP: 192.168.7.1

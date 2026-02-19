@@ -109,7 +109,7 @@ void wifiScanNetworks() {
   } else {
     wifiSetupCtx.networkCount = min(n, WIFI_MAX_NETWORKS);
 
-    SerialPrintLn("\r\n" + String(wifiSetupCtx.networkCount) + " networks found:\r\n");
+    SerialPrintLn("\r\n" + String(wifiSetupCtx.networkCount) + " networks found:");
 
     for (int i = 0; i < wifiSetupCtx.networkCount; i++) {
       // Build display string with signal strength indicator
@@ -127,16 +127,11 @@ void wifiScanNetworks() {
       }
 
       networkList[i] = ssidName + " " + rssiStr;
-
-      // Serial output with full info
-      SerialPrint(String(i + 1) + ". ");
-      SerialPrint(WiFi.SSID(i));
-      SerialPrint(" (");
-      SerialPrint(String(rssi));
-      SerialPrint(" dBm) ");
-      SerialPrintLn(WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "[Open]" : "[Secured]");
     }
-    SerialPrintLn();
+    // Add Cancel option after the networks
+    if (wifiSetupCtx.networkCount < WIFI_MAX_NETWORKS) {
+      networkList[wifiSetupCtx.networkCount] = "Cancel";
+    }
   }
 
   wifiSetupCtx.state = WIFI_STATE_SELECT;
@@ -150,7 +145,9 @@ void wifiSetupMenu(bool arrow) {
     static String noNetOptions[] = { "Rescan", "Back" };
     showMenu("WIFI", noNetOptions, 2, (arrow ? MENU_DISP : MENU_BOTH), 0);
   } else {
-    showMenu("WIFI", networkList, wifiSetupCtx.networkCount, (arrow ? MENU_DISP : MENU_NUM), 0);
+    // +1 for the Cancel option at the end
+    int totalItems = wifiSetupCtx.networkCount + 1;
+    showMenu("WIFI", networkList, totalItems, (arrow ? MENU_DISP : MENU_NUM), 0);
   }
 }
 
@@ -246,10 +243,11 @@ void wifiSetupLoop() {
     chr = SerialRead();
     SerialPrint(chr);
 
-    // Handle letter selection (A-T for networks)
+    // Handle letter selection (A-? for networks + Cancel)
     if (wifiSetupCtx.networkCount > 0) {
-      if ((chr >= 'A' && chr < 'A' + wifiSetupCtx.networkCount) ||
-          (chr >= 'a' && chr < 'a' + wifiSetupCtx.networkCount)) {
+      int totalItems = wifiSetupCtx.networkCount + 1; // +1 for Cancel
+      if ((chr >= 'A' && chr < 'A' + totalItems) ||
+          (chr >= 'a' && chr < 'a' + totalItems)) {
         if (chr >= 'a') chr -= 32; // To uppercase
         menuSel = chr - 'A';
       }
@@ -285,6 +283,12 @@ void wifiSetupLoop() {
         }
         settingsMenu(false);
       }
+    } else if (menuSel == wifiSetupCtx.networkCount) {
+      // Cancel selected - go back
+      if (ssid.length() > 0) {
+        WiFi.begin(ssid.c_str(), password.c_str());
+      }
+      settingsMenu(false);
     } else {
       // Network selected - get the actual SSID (not the display string)
       wifiSetupCtx.selectedNetwork = menuSel;

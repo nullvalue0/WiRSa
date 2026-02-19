@@ -110,6 +110,8 @@
 #define DEFAULTMODE_ADDRESS 790
 #define SERIALCONFIG_ADDRESS 791
 #define USB_DEBUG_ADDRESS 792
+#define QUIET_MODE_ADDRESS 793
+#define ESC_CHAR_ADDRESS 794
 
 // Port Forwarding (generic, shared by SLIP and PPP)
 #define PORTFWD_BASE    950   // Port forwards start here

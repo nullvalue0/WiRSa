@@ -33,6 +33,8 @@ extern bool telnet;
 extern bool verboseResults;
 extern bool echo;
 extern bool autoAnswer;
+extern bool quietMode;
+extern byte escChar;
 extern bool usbDebug;
 extern int tcpServerPort;
 extern unsigned long connectTime;
@@ -90,6 +92,7 @@ String connectTimeString() {
 
 // Send an AT result code to the serial port
 void sendResult(int resultCode) {
+  if (quietMode) return; // ATQ1 suppresses all result codes
   SerialPrint("\r\n");
   if (verboseResults == 0) {
     SerialPrintLn(resultCode);
@@ -221,7 +224,9 @@ void displayHelp() {
   SerialPrintLn("FACT. DEFAULTS.: AT&F"); yield();
   SerialPrintLn("PIN POLARITY...: AT&PN (N=0/INV,1/NORM)"); yield();
   SerialPrintLn("ECHO OFF/ON....: ATE0 / ATE1"); yield();
+  SerialPrintLn("QUIET OFF/ON...: ATQ0 / ATQ1"); yield();
   SerialPrintLn("VERBOSE OFF/ON.: ATV0 / ATV1"); yield();
+  SerialPrintLn("ESCAPE CHAR....: ATS2=N (0-255, 255=OFF)"); yield();
   SerialPrintLn("SET SSID.......: AT$SSID=WIFISSID"); yield();
   SerialPrintLn("SET PASSWORD...: AT$PASS=WIFIPASSWORD"); yield();
   waitForSpace();
@@ -251,7 +256,9 @@ void displayCurrentSettings() {
   //SerialPrint("SERVER TCP PORT: "); SerialPrintLn(tcpServerPort); yield();
   SerialPrint("BUSY MSG: "); SerialPrintLn(busyMsg); yield();
   SerialPrint("E"); SerialPrint(echo); SerialPrint(" "); yield();
+  SerialPrint("Q"); SerialPrint(quietMode); SerialPrint(" "); yield();
   SerialPrint("V"); SerialPrint(verboseResults); SerialPrint(" "); yield();
+  SerialPrint("S2:"); SerialPrint(escChar); SerialPrint(" "); yield();
   SerialPrint("&K"); SerialPrint(flowControl); SerialPrint(" "); yield();
   SerialPrint("&P"); SerialPrint(pinPolarity); SerialPrint(" "); yield();
   SerialPrint("&D"); SerialPrint(dtrMode); SerialPrint(" "); yield();
@@ -279,7 +286,9 @@ void displayStoredSettings() {
   //SerialPrint("SERVER TCP PORT: "); SerialPrintLn(word(EEPROM.read(SERVER_PORT_ADDRESS), EEPROM.read(SERVER_PORT_ADDRESS+1))); yield();
   SerialPrint("BUSY MSG: "); SerialPrintLn(getEEPROM(BUSY_MSG_ADDRESS, BUSY_MSG_LEN)); yield();
   SerialPrint("E"); SerialPrint(EEPROM.read(ECHO_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("Q"); SerialPrint(EEPROM.read(QUIET_MODE_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("V"); SerialPrint(EEPROM.read(VERBOSE_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("S2:"); SerialPrint(EEPROM.read(ESC_CHAR_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("&K"); SerialPrint(EEPROM.read(FLOW_CONTROL_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("&P"); SerialPrint(EEPROM.read(PIN_POLARITY_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("&D"); SerialPrint(EEPROM.read(DTR_MODE_ADDRESS)); SerialPrint(" "); yield();
@@ -349,8 +358,29 @@ void handleIncomingConnection() {
     return;
   }
 
-  // Check if this should become a console connection
-  // First telnet connection without a console becomes the management console
+  // Auto-answer mode: every incoming connection is a call (BBS mode)
+  // Skip console logic so the RS232 host (BBS software) sees RING + CONNECT + DCD
+  if (autoAnswer == true) {
+    tcpClient = tcpServer.available();
+    tcpClient.setNoDelay(true);
+    sendString(String("RING ") + ipToString(tcpClient.remoteIP()));
+    setRI(true);
+    riTime = millis();
+    delay(1000);
+    setRI(false);
+    riTime = 0;
+    sendResult(R_CONNECT);
+    connectTime = millis();
+    cmdMode = false;
+    tcpClient.flush();
+    callConnected = true;
+    setCarrier(callConnected);
+    SerialFlush();
+    return;
+  }
+
+  // Manual answer mode: first connection becomes management console,
+  // subsequent connections ring for ATA
   if (!consoleConnected) {
     // Accept as console client - stays in command mode
     consoleClient = tcpServer.available();
@@ -377,40 +407,24 @@ void handleIncomingConnection() {
     return;
   }
 
-  // Console already connected - handle as traditional call connection
-  // (ring/answer behavior for secondary connections)
-  if (autoAnswer == false && ringCount > 3) {
+  // Console connected, manual answer - ring for ATA
+  if (ringCount > 3) {
     // Didn't answer after three rings - reject
     ringCount = lastRingMs = 0;
     WiFiClient anotherClient = tcpServer.available();
-    anotherClient.print("BUSY - Console in use\r\n");
+    anotherClient.print(busyMsg);
+    anotherClient.print("\r\n");
     anotherClient.flush();
     anotherClient.stop();
     return;
   }
 
-  if (autoAnswer == false) {
-    if (millis() - lastRingMs > 6000 || lastRingMs == 0) {
-      lastRingMs = millis();
-      sendResult(R_RING);
-      setRI(true);
-      riTime = millis();
-      ringCount++;
-    }
-    return;
-  }
-
-  // Auto-answer secondary connections as calls
-  if (autoAnswer == true) {
-    tcpClient = tcpServer.available();
-    sendString(String("RING ") + ipToString(tcpClient.remoteIP()));
-    delay(1000);
-    sendResult(R_CONNECT);
-    connectTime = millis();
-    cmdMode = false;
-    tcpClient.flush();
-    callConnected = true;
-    setCarrier(callConnected);
+  if (millis() - lastRingMs > 6000 || lastRingMs == 0) {
+    lastRingMs = millis();
+    sendResult(R_RING);
+    setRI(true);
+    riTime = millis();
+    ringCount++;
   }
 }
 
@@ -657,6 +671,25 @@ void command()
     }
   }
 
+  /**** Control quiet mode (suppress result codes) ****/
+  else if (upCmd.indexOf("ATQ") == 0) {
+    if (upCmd.substring(3, 4) == "?") {
+      sendString(String(quietMode));
+      sendResult(R_OK_STAT);
+    }
+    else if (upCmd.substring(3, 4) == "0") {
+      quietMode = false;
+      sendResult(R_OK_STAT);
+    }
+    else if (upCmd.substring(3, 4) == "1") {
+      quietMode = true;
+      sendResult(R_OK_STAT);
+    }
+    else {
+      sendResult(R_ERROR);
+    }
+  }
+
   /**** Control pin polarity of CTS, RTS, DCD ****/
   else if (upCmd.indexOf("AT&P") == 0) {
     if (upCmd.substring(4, 5) == "?") {
@@ -838,6 +871,23 @@ void command()
   /**** Display auto answer setting ****/
   else if (upCmd == "ATS0?") {
     sendString(String(autoAnswer));
+    sendResult(R_OK_STAT);
+  }
+
+  /**** Set escape character (S2 register) ****/
+  else if (upCmd.indexOf("ATS2=") == 0) {
+    int val = upCmd.substring(5).toInt();
+    if (val >= 0 && val <= 255) {
+      escChar = (byte)val;
+      sendResult(R_OK_STAT);
+    } else {
+      sendResult(R_ERROR);
+    }
+  }
+
+  /**** Display escape character setting ****/
+  else if (upCmd == "ATS2?") {
+    sendString(String(escChar));
     sendResult(R_OK_STAT);
   }
 
@@ -1909,18 +1959,13 @@ void modemLoop()
       if (Serial.available()) {
         len = std::min(Serial.available(), max_buf_size);
         len = Serial.readBytes(&txBuf[0], len);
-        //if (len > 0) displayChar('[');
-        // Enter command mode with "+++" sequence
+        // Enter command mode with escape sequence (e.g. "+++")
         for (int i = 0; i < (int)len; i++)
         {
-          if (txBuf[i] == '+') plusCount++; else plusCount = 0;
-          if (plusCount >= 3)
-          {
-            plusTime = millis();
-          }
-          if (txBuf[i] != '+')
-          {
-            plusCount = 0;
+          if (escChar != 255) { // ATS2=255 disables escape detection
+            if (txBuf[i] == escChar) plusCount++; else plusCount = 0;
+            if (plusCount >= 3) plusTime = millis();
+            if (txBuf[i] != escChar) plusCount = 0;
           }
           displayChar(txBuf[i], XFER_SEND);
         }
@@ -1931,18 +1976,13 @@ void modemLoop()
       if (PhysicalSerial.available()) {
         len = std::min(PhysicalSerial.available(), max_buf_size);
         len = PhysicalSerial.readBytes(&txBuf[0], len);
-        //if (len > 0) displayChar('[');
-        // Enter command mode with "+++" sequence
+        // Enter command mode with escape sequence (e.g. "+++")
         for (int i = 0; i < (int)len; i++)
         {
-          if (txBuf[i] == '+') plusCount++; else plusCount = 0;
-          if (plusCount >= 3)
-          {
-            plusTime = millis();
-          }
-          if (txBuf[i] != '+')
-          {
-            plusCount = 0;
+          if (escChar != 255) {
+            if (txBuf[i] == escChar) plusCount++; else plusCount = 0;
+            if (plusCount >= 3) plusTime = millis();
+            if (txBuf[i] != escChar) plusCount = 0;
           }
           displayChar(txBuf[i], XFER_SEND);
         }
@@ -1973,17 +2013,13 @@ void modemLoop()
         }
         if (consoleLen > 0) {
           len = consoleLen;
-          // Enter command mode with "+++" sequence from console too
+          // Enter command mode with escape sequence from console too
           for (int i = 0; i < (int)len; i++)
           {
-            if (txBuf[i] == '+') plusCount++; else plusCount = 0;
-            if (plusCount >= 3)
-            {
-              plusTime = millis();
-            }
-            if (txBuf[i] != '+')
-            {
-              plusCount = 0;
+            if (escChar != 255) {
+              if (txBuf[i] == escChar) plusCount++; else plusCount = 0;
+              if (plusCount >= 3) plusTime = millis();
+              if (txBuf[i] != escChar) plusCount = 0;
             }
             displayChar(txBuf[i], XFER_SEND);
           }
