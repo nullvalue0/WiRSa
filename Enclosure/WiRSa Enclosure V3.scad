@@ -111,7 +111,7 @@ module cover(width, length, height, wall, deviation) {
 
                 translate([11,wall+5,6]) //up
                         mirror([-1,0,0])
-                            text("8", size=8, font="Webdings:style=bold");
+                            text("7", size=8, font="Webdings:style=bold");
 
                 translate([11,wall+15,6]) //select
                         mirror([-1,0,0])
@@ -123,7 +123,7 @@ module cover(width, length, height, wall, deviation) {
                             
                 translate([11,wall+35,6]) //down
                         mirror([-1,0,0])
-                            text("7", size=8, font="Webdings:style=bold");
+                            text("8", size=8, font="Webdings:style=bold");
         }
         
     }
