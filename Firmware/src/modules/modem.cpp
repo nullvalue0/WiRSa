@@ -21,6 +21,8 @@
 #include <EEPROM.h>
 #include <arduino-timer.h>
 #include "SD.h"
+#include <sys/socket.h>   // for recv() to detect remote TCP close
+#include <fcntl.h>        // for fcntl() O_NONBLOCK
 
 // RI pulse timer - tracks when RI was asserted so modemLoop can de-assert after 1 second
 static unsigned long riTime = 0;
@@ -43,6 +45,7 @@ extern String busyMsg;
 extern WiFiClient tcpClient;
 extern WiFiClient consoleClient;
 extern bool consoleConnected;
+extern bool consoleMode;
 extern WiFiServer tcpServer;
 extern String speedDials[];
 extern byte serialSpeed;
@@ -235,6 +238,7 @@ void displayHelp() {
   SerialPrintLn("SET PORT.......: AT$SP=PORT"); yield();
   SerialPrintLn("FLOW CONTROL...: AT&KN (N=0/N,1/HW,2/SW)"); yield();
   SerialPrintLn("DTR HANDLING...: AT&DN (N=0/IGN,1/CMD,2/HUP,3/RST)"); yield();
+  SerialPrintLn("CONSOLE MODE...: AT&CN (N=0/OFF,1/ON)"); yield();
   SerialPrintLn("WIFI OFF/ON....: ATC0 / ATC1"); yield();
   SerialPrintLn("HANGUP.........: ATH"); yield();
   SerialPrintLn("ENTER CMD MODE.: +++"); yield();
@@ -262,6 +266,7 @@ void displayCurrentSettings() {
   SerialPrint("&K"); SerialPrint(flowControl); SerialPrint(" "); yield();
   SerialPrint("&P"); SerialPrint(pinPolarity); SerialPrint(" "); yield();
   SerialPrint("&D"); SerialPrint(dtrMode); SerialPrint(" "); yield();
+  SerialPrint("&C"); SerialPrint(consoleMode); SerialPrint(" "); yield();
   SerialPrint("NET"); SerialPrint(telnet); SerialPrint(" "); yield();
   SerialPrint("PET"); SerialPrint(petTranslate); SerialPrint(" "); yield();
   SerialPrint("S0:"); SerialPrint(autoAnswer); SerialPrint(" "); yield();
@@ -292,6 +297,7 @@ void displayStoredSettings() {
   SerialPrint("&K"); SerialPrint(EEPROM.read(FLOW_CONTROL_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("&P"); SerialPrint(EEPROM.read(PIN_POLARITY_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("&D"); SerialPrint(EEPROM.read(DTR_MODE_ADDRESS)); SerialPrint(" "); yield();
+  SerialPrint("&C"); SerialPrint(EEPROM.read(CONSOLE_MODE_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("NET"); SerialPrint(EEPROM.read(TELNET_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("PET"); SerialPrint(EEPROM.read(PET_TRANSLATE_ADDRESS)); SerialPrint(" "); yield();
   SerialPrint("S0:"); SerialPrint(EEPROM.read(AUTO_ANSWER_ADDRESS)); SerialPrint(" "); yield();
@@ -324,6 +330,7 @@ void led_on()
 void answerCall() {
   tcpClient = tcpServer.available();
   tcpClient.setNoDelay(true); // try to disable naggle
+  tcpClient.print("\r\nWiRSa " + build + " - Call Mode\r\n");
   //tcpServer.stop();
   setRI(false);
   riTime = 0;
@@ -338,7 +345,7 @@ void answerCall() {
 // Handle incoming TCP connection
 void handleIncomingConnection() {
   // If DTR handling is active and DTR is low, reject all incoming connections
-  if (dtrMode > 0 && digitalRead(DTR_PIN) == LOW) {
+  if (dtrMode > 0 && readDTR() == false) {
     WiFiClient rejected = tcpServer.available();
     rejected.stop();
     return;
@@ -363,9 +370,11 @@ void handleIncomingConnection() {
   if (autoAnswer == true) {
     tcpClient = tcpServer.available();
     tcpClient.setNoDelay(true);
+    tcpClient.print("\r\nWiRSa " + build + " - Call Mode\r\n");
     sendString(String("RING ") + ipToString(tcpClient.remoteIP()));
     setRI(true);
     riTime = millis();
+    refreshDisplay(nullptr);
     delay(1000);
     setRI(false);
     riTime = 0;
@@ -375,13 +384,14 @@ void handleIncomingConnection() {
     tcpClient.flush();
     callConnected = true;
     setCarrier(callConnected);
+    refreshDisplay(nullptr);
     SerialFlush();
     return;
   }
 
-  // Manual answer mode: first connection becomes management console,
+  // Manual answer mode: first connection becomes management console (if consoleMode enabled),
   // subsequent connections ring for ATA
-  if (!consoleConnected) {
+  if (consoleMode && !consoleConnected) {
     // Accept as console client - stays in command mode
     consoleClient = tcpServer.available();
     consoleClient.setNoDelay(true);
@@ -765,6 +775,25 @@ void command()
     }
   }
 
+  /**** Console mode enable/disable ****/
+  else if (upCmd.indexOf("AT&C") == 0) {
+    if (upCmd.substring(4, 5) == "?") {
+      sendString(String(consoleMode));
+      sendResult(R_OK_STAT);
+    }
+    else if (upCmd.substring(4, 5) == "0") {
+      consoleMode = false;
+      sendResult(R_OK_STAT);
+    }
+    else if (upCmd.substring(4, 5) == "1") {
+      consoleMode = true;
+      sendResult(R_OK_STAT);
+    }
+    else {
+      sendResult(R_ERROR);
+    }
+  }
+
   /**** Set current baud rate ****/
   else if (upCmd.indexOf("AT$SB=") == 0) {
     setBaudRate(upCmd.substring(6).toInt());
@@ -1086,9 +1115,12 @@ void command()
 // for the handshake wire to go low before transmitting any more.
 // http://electronics.stackexchange.com/questions/38022/what-is-rts-and-cts-flow-control
 void handleFlowControl() {
-  if (flowControl == F_NONE) return;
+  if (flowControl == F_NONE) {
+    txPaused = false;
+    return;
+  }
   if (flowControl == F_HARDWARE) {
-    if (digitalRead(CTS_PIN) == pinPolarity) txPaused = true;
+    if (readCTS()) txPaused = true;
     else txPaused = false;
   }
   if (flowControl == F_SOFTWARE) {
@@ -1796,7 +1828,7 @@ void modemLoop()
   // DTR monitoring
   if (dtrMode > 0) {
     static bool lastDTR = true;  // assume DTR starts high
-    bool currentDTR = digitalRead(DTR_PIN);
+    bool currentDTR = readDTR();
 
     if (lastDTR && !currentDTR) {
       // DTR fell - falling edge
@@ -2130,14 +2162,50 @@ void modemLoop()
     }
   }
 
-  // Go to command mode if TCP disconnected and not in command mode
-  if ((!tcpClient.connected()) && (cmdMode == false) && callConnected == true)
+  // Detect remote TCP disconnect.
+  // ESP32's WiFiClient::connected() fails to detect a remote FIN because:
+  // - connected() does recv(fd, dummy, 0, MSG_DONTWAIT) - zero-length recv doesn't
+  //   consume the FIN on lwIP, errno stays EWOULDBLOCK, reports still connected.
+  // - WiFiClientRxBuffer uses FIONREAD which only counts DATA bytes, not FIN.
+  //   When FIONREAD returns 0, fillBuffer() skips calling recv() entirely.
+  //
+  // Fix: when WiFiClient reports no buffered data, do a direct 1-byte
+  // MSG_PEEK|MSG_DONTWAIT recv on the raw fd. If it returns 0, FIN was received.
+  // If WiFiClient has buffered data, the connection is alive (data still flowing).
+  //
+  // Note: we check both WiFiClient's buffer AND the raw socket. WiFiClient's
+  // available() uses FIONREAD which misses the FIN, but if FIONREAD says 0 AND
+  // the WiFiClient rx buffer is empty, we probe the socket directly.
+  bool remoteDisconnected = false;
+  if (callConnected) {
+    int sockfd = tcpClient.fd();
+    if (sockfd >= 0) {
+      // Check if there's ANY data at the socket level (bypassing WiFiClient buffer)
+      uint8_t dummy;
+      int ret = recv(sockfd, &dummy, 1, MSG_PEEK | MSG_DONTWAIT);
+      if (ret == 0) {
+        // recv returned 0 = remote sent FIN, orderly shutdown
+        remoteDisconnected = true;
+      }
+      // ret > 0: data available (either in WiFiClient buffer or new from socket)
+      // ret < 0: EWOULDBLOCK (no data, no FIN) or other error
+    }
+  }
+  if ((remoteDisconnected || !tcpClient.connected()) && callConnected == true)
   {
+    if (remoteDisconnected) {
+      // Set SO_LINGER with l_linger=0 so close() sends RST immediately instead of
+      // blocking in the CLOSE_WAIT FIN/ACK handshake on ESP32 lwIP.
+      int sockfd = tcpClient.fd();
+      if (sockfd >= 0) {
+        struct linger sl;
+        sl.l_onoff = 1;
+        sl.l_linger = 0;
+        setsockopt(sockfd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
+      }
+    }
     cmdMode = true;
-    sendResult(R_NOCARRIER);
-    connectTime = 0;
-    callConnected = false;
-    setCarrier(callConnected);
+    hangUp();
 
     msgFlag=true; //force full menu redraw
     modemConnected();
@@ -2152,6 +2220,41 @@ void modemLoop()
 bool refreshDisplay(void *)
 {
   static uint8_t wifiUpdateCounter = 0;
+
+  if (signalMonitorEnabled) {
+    // Signal monitor mode: only overwrite the pin state values in place
+    // The layout was drawn once by modemConnected(); here we just update the HI/LO text
+    display.setTextColor(SSD1306_WHITE);
+
+    // Row 1: DCD and RTS (y=19)
+    display.fillRect(27, 19, 24, 8, SSD1306_BLACK);
+    display.setCursor(27, 19);
+    display.print(callConnected ? "HI" : "LO");
+    display.fillRect(88, 19, 24, 8, SSD1306_BLACK);
+    display.setCursor(88, 19);
+    display.print(digitalRead(RTS_PIN) ? "HI" : "LO");
+
+    // Row 2: CTS and DTR (y=29)
+    display.fillRect(27, 29, 24, 8, SSD1306_BLACK);
+    display.setCursor(27, 29);
+    display.print(readCTS() ? "HI" : "LO");
+    display.fillRect(88, 29, 24, 8, SSD1306_BLACK);
+    display.setCursor(88, 29);
+    display.print(readDTR() ? "HI" : "LO");
+
+    // Row 3: DSR and RI (y=39)
+    display.fillRect(27, 39, 24, 8, SSD1306_BLACK);
+    display.setCursor(27, 39);
+    display.print((WiFi.status() == WL_CONNECTED) ? "HI" : "LO");
+    display.fillRect(88, 39, 24, 8, SSD1306_BLACK);
+    display.setCursor(88, 39);
+    display.print(riTime ? "HI" : "LO");
+
+    display.display();
+    sentChanged = false;
+    recvChanged = false;
+    return true;
+  }
 
   if (speedDialShown) {
     display.clearDisplay();

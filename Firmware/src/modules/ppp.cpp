@@ -6,6 +6,7 @@
 
 #include "ppp.h"
 #include "globals.h"
+#include "network.h"
 
 // ============================================================================
 // CRC-16 FCS Table (CCITT polynomial 0x8408, reversed 0x1021)
@@ -251,7 +252,7 @@ void pppSendFrame(PppContext* ctx, uint16_t protocol,
     // Logic matches handleFlowControl(): pause when CTS == pinPolarity
     if (flowControl == 1) {  // F_HARDWARE
         unsigned long startWait = millis();
-        while (digitalRead(CTS_PIN) == pinPolarity) {
+        while (readCTS()) {
             if (millis() - startWait > 1000) {
                 // Timeout after 1 second - don't block forever
                 break;

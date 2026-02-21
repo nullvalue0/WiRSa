@@ -15,6 +15,8 @@ void setBaudRate(int inSpeed);
 void setCarrier(byte carrier);
 void setDSR(byte dsr);
 void setRI(byte ri);
+bool readDTR();   // Read DTR input, polarity-corrected
+bool readCTS();   // Read CTS input, polarity-corrected
 void showCallIcon();
 
 #endif // NETWORK_H

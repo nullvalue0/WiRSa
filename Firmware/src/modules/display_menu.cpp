@@ -340,30 +340,58 @@ void modemConnected() {
   showCallIcon();
   display.setTextWrap(false);
 
-  display.setCursor(3, 19);
-  display.print("WIFI: ");
-  display.print(WiFi.SSID());
+  if (signalMonitorEnabled) {
+    // Signal monitor overlay - show pin states instead of IP/bytes
+    display.setCursor(3, 19);
+    display.print("DCD:");
+    display.print(callConnected ? "HI" : "LO");
+    display.setCursor(64, 19);
+    display.print("RTS:");
+    display.print(digitalRead(RTS_PIN) ? "HI" : "LO");
 
-  display.setCursor(3, 29);
-  //display.print("IP: ");
-  display.print(ipToString(WiFi.localIP()));
+    display.setCursor(3, 29);
+    display.print("CTS:");
+    display.print(readCTS() ? "HI" : "LO");
+    display.setCursor(64, 29);
+    display.print("DTR:");
+    display.print(readDTR() ? "HI" : "LO");
 
-  if (tcpServerPort > 0) {
-    display.print(":");
-    display.print(tcpServerPort);
+    display.setCursor(3, 39);
+    display.print("DSR:");
+    display.print(callConnected ? "HI" : "LO");
+    display.setCursor(64, 39);
+    display.print("RI :");
+    display.print("LO");
+
+    display.drawLine(0, 50, 127, 50, SSD1306_WHITE);
+    display.setCursor(3, 53);
+    display.print("SIG MON");
+  } else {
+    display.setCursor(3, 19);
+    display.print("WIFI: ");
+    display.print(WiFi.SSID());
+
+    display.setCursor(3, 29);
+    //display.print("IP: ");
+    display.print(ipToString(WiFi.localIP()));
+
+    if (tcpServerPort > 0) {
+      display.print(":");
+      display.print(tcpServerPort);
+    }
+
+    display.drawLine(0,40,127,40,SSD1306_WHITE);
+
+    display.setCursor(3, 43);
+    display.print("SENT: ");
+    display.print(String(bytesSent));
+    display.print(" B");
+
+    display.setCursor(3, 53);
+    display.print("RECV: ");
+    display.print(String(bytesRecv));
+    display.print(" B");
   }
-
-  display.drawLine(0,40,127,40,SSD1306_WHITE);
-
-  display.setCursor(3, 43);
-  display.print("SENT: ");
-  display.print(String(bytesSent));
-  display.print(" B");
-
-  display.setCursor(3, 53);
-  display.print("RECV: ");
-  display.print(String(bytesRecv));
-  display.print(" B");
 
   display.display();
   display.setTextWrap(true);

@@ -7,6 +7,7 @@
 #define DCD_PIN 33
 #define RTS_PIN 15
 #define CTS_PIN 27
+#define DTR_PIN 4
 #define DSR_PIN 26
 #define RI_PIN  25
 #define RXD2 16
@@ -227,6 +228,14 @@ void setDSR(byte dsr) {
 void setRI(byte ri) {
   if (pinPolarity == P_NORMAL) ri = !ri;
   digitalWrite(RI_PIN, ri);
+}
+
+bool readDTR() {
+  return digitalRead(DTR_PIN) == pinPolarity;
+}
+
+bool readCTS() {
+  return digitalRead(CTS_PIN) == pinPolarity;
 }
 
 void showCallIcon() {

@@ -6,6 +6,8 @@
 #include "globals.h"
 #include "display_menu.h"
 #include "serial_io.h"
+#include "settings.h"
+#include "network.h"
 #include <WiFi.h>
 #include <Adafruit_SSD1306.h>
 
@@ -25,6 +27,7 @@ extern HardwareSerial PhysicalSerial;
 extern String build;
 extern long bytesSent;
 extern long bytesRecv;
+extern bool signalMonitorEnabled;
 
 // Button state
 extern bool BTNUP;
@@ -54,11 +57,11 @@ void diagnosticsInit() {
 // ============================================================================
 
 void showSignalStates() {
-  // Read pin states
+  // Read pin states (inputs polarity-corrected, outputs read raw)
   int dcd = digitalRead(DCD_PIN);
   int rts = digitalRead(RTS_PIN);
-  int cts = digitalRead(CTS_PIN);
-  int dtr = digitalRead(DTR_PIN);
+  int cts = readCTS();
+  int dtr = readDTR();
   int dsr = digitalRead(DSR_PIN);
   int ri  = digitalRead(RI_PIN);
 
@@ -73,11 +76,11 @@ void showSignalStates() {
 }
 
 void signalMonitorDisplay() {
-  // Read pin states
+  // Read pin states (inputs polarity-corrected)
   int dcd = digitalRead(DCD_PIN);
   int rts = digitalRead(RTS_PIN);
-  int cts = digitalRead(CTS_PIN);
-  int dtr = digitalRead(DTR_PIN);
+  int cts = readCTS();
+  int dtr = readDTR();
   int dsr = digitalRead(DSR_PIN);
   int ri  = digitalRead(RI_PIN);
 
@@ -150,8 +153,8 @@ void signalMonitor() {
 
       int dcd = digitalRead(DCD_PIN);
       int rts = digitalRead(RTS_PIN);
-      int cts = digitalRead(CTS_PIN);
-      int dtr = digitalRead(DTR_PIN);
+      int cts = readCTS();
+      int dtr = readDTR();
       int dsr = digitalRead(DSR_PIN);
       int ri  = digitalRead(RI_PIN);
 
@@ -644,6 +647,7 @@ void showConnectionStats() {
 
 void diagnosticsMenu(bool arrow) {
   menuMode = MODE_DIAGNOSTICS;
+  diagnosticsMenuDisp[4] = signalMonitorEnabled ? "Signal Mon: ON" : "Signal Mon: OFF";
   showMenu("DIAG", diagnosticsMenuDisp, 6, (arrow ? MENU_DISP : MENU_BOTH), 0);
 }
 
@@ -709,8 +713,11 @@ void diagnosticsLoop() {
       diagnosticsMenu(false);
     }
     else if (chr == 'S' || chr == 's' || menuSel == 4) {
-      // Signal Monitor
-      signalMonitor();
+      // Signal Monitor - toggle overlay in modem mode
+      signalMonitorEnabled = !signalMonitorEnabled;
+      writeSettings();
+      showMessage(signalMonitorEnabled ? "Signal Mon\n\nENABLED" : "Signal Mon\n\nDISABLED");
+      delay(1500);
       diagnosticsMenu(false);
     }
     else if (chr == 'I' || chr == 'i' || menuSel == 5) {

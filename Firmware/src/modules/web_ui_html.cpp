@@ -105,6 +105,7 @@ nav button.active{background:linear-gradient(90deg,#ff3377,#5566ff);color:#fff}
 <div class="row">
 <div class="toggle"><input type="checkbox" id="modem-telnet"><label for="modem-telnet">Telnet Protocol (NET)</label></div>
 <div class="toggle"><input type="checkbox" id="modem-petscii"><label for="modem-petscii">PETSCII Translation (PET)</label></div>
+<div class="toggle"><input type="checkbox" id="modem-console"><label for="modem-console">Telnet Console (&C)</label></div>
 </div>
 </div>
 
@@ -230,6 +231,7 @@ document.getElementById('modem-verbose').checked=d.modem.verbose;
 document.getElementById('modem-autoanswer').checked=d.modem.autoAnswer;
 document.getElementById('modem-telnet').checked=d.modem.telnet;
 document.getElementById('modem-petscii').checked=d.modem.petscii;
+document.getElementById('modem-console').checked=d.modem.consoleEnabled;
 document.getElementById('flow-control').value=d.flow.control;
 document.getElementById('flow-polarity').value=d.flow.pinPolarity;
 document.getElementById('net-port').value=d.network.serverPort;
@@ -248,7 +250,7 @@ function saveSettings(){
 let data={
 wifi:{ssid:document.getElementById('wifi-ssid').value},
 serial:{baudIndex:parseInt(document.getElementById('serial-baud').value),configIndex:parseInt(document.getElementById('serial-config').value)},
-modem:{echo:document.getElementById('modem-echo').checked,verbose:document.getElementById('modem-verbose').checked,autoAnswer:document.getElementById('modem-autoanswer').checked,telnet:document.getElementById('modem-telnet').checked,petscii:document.getElementById('modem-petscii').checked},
+modem:{echo:document.getElementById('modem-echo').checked,verbose:document.getElementById('modem-verbose').checked,autoAnswer:document.getElementById('modem-autoanswer').checked,telnet:document.getElementById('modem-telnet').checked,petscii:document.getElementById('modem-petscii').checked,consoleEnabled:document.getElementById('modem-console').checked},
 flow:{control:parseInt(document.getElementById('flow-control').value),pinPolarity:parseInt(document.getElementById('flow-polarity').value)},
 network:{serverPort:parseInt(document.getElementById('net-port').value),busyMsg:document.getElementById('net-busy').value},
 speedDials:[],

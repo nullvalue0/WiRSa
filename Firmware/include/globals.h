@@ -112,6 +112,8 @@
 #define USB_DEBUG_ADDRESS 792
 #define QUIET_MODE_ADDRESS 793
 #define ESC_CHAR_ADDRESS 794
+#define CONSOLE_MODE_ADDRESS 795
+#define SIGNAL_MONITOR_ADDRESS 796
 
 // Port Forwarding (generic, shared by SLIP and PPP)
 #define PORTFWD_BASE    950   // Port forwards start here
@@ -283,6 +285,8 @@ extern byte flowControl;
 extern byte pinPolarity;
 extern byte dtrMode;
 extern bool petTranslate;
+extern bool consoleMode;
+extern bool signalMonitorEnabled;
 extern unsigned long connectTime;
 extern bool txPaused;
 extern int menuMode;

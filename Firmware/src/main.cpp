@@ -40,6 +40,11 @@
  **************************************************************************/
 
  /*
+ changes 3.10
+ - modified signal monitor to show on screen while in modem mode
+ - fixed telnet call mode to assert DCD
+ - fixed some pin polarity issues
+
  changes 3.09
  - when S0=1 (auto-answer), telnet goes to RING/CONNECT/DCD
  - added ATQ0/ATQ1 and ATS2=N commands
@@ -275,7 +280,7 @@ const uint32_t crc32tab[256] PROGMEM = {
 
 
 // Global variables
-String build = "v3.09";
+String build = "v3.10";
 String cmd = "";              // Gather a new AT command to this string from serial
 bool cmdMode = true;          // Are we in AT command mode or connected mode
 bool callConnected = false;   // Are we currently in a call
@@ -327,6 +332,8 @@ String resultCodes[] = { "OK", "CONNECT", "RING", "NO CARRIER", "ERROR", "", "NO
 enum resultCodes_t { R_OK_STAT, R_CONNECT, R_RING, R_NOCARRIER, R_ERROR, R_NONE, R_NODIALTONE, R_BUSY, R_NOANSWER };
 unsigned long connectTime = 0;
 bool petTranslate = false; // Fix PET MCTerm 1.26C Pet->ASCII encoding to actual ASCII
+bool consoleMode = true;   // AT&C: First telnet connection becomes console (true) or all connections ring (false)
+bool signalMonitorEnabled = false; // Show signal states on OLED in modem mode
 bool bHex = false;
 enum flowControl_t { F_NONE, F_HARDWARE, F_SOFTWARE };
 byte flowControl = F_NONE;      // Use flow control

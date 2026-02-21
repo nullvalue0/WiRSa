@@ -39,6 +39,8 @@
 #define USB_DEBUG_ADDRESS 792
 #define QUIET_MODE_ADDRESS 793
 #define ESC_CHAR_ADDRESS 794
+#define CONSOLE_MODE_ADDRESS 795
+#define SIGNAL_MONITOR_ADDRESS 796
 #define LISTEN_PORT 23
 
 // Global variables (defined in main.cpp)
@@ -49,6 +51,8 @@ extern byte escChar;
 extern int tcpServerPort;
 extern byte flowControl, pinPolarity, dtrMode, dispOrientation, defaultMode;
 extern bool usbDebug;
+extern bool consoleMode;
+extern bool signalMonitorEnabled;
 extern String speedDials[10];
 extern const int speedDialAddresses[];
 
@@ -74,6 +78,8 @@ void writeSettings() {
   EEPROM.write(USB_DEBUG_ADDRESS, byte(usbDebug));
   EEPROM.write(QUIET_MODE_ADDRESS, byte(quietMode));
   EEPROM.write(ESC_CHAR_ADDRESS, escChar);
+  EEPROM.write(CONSOLE_MODE_ADDRESS, byte(consoleMode));
+  EEPROM.write(SIGNAL_MONITOR_ADDRESS, byte(signalMonitorEnabled));
 
   for (int i = 0; i < 10; i++) {
     setEEPROM(speedDials[i], speedDialAddresses[i], 50);
@@ -102,6 +108,9 @@ void readSettings() {
   usbDebug = EEPROM.read(USB_DEBUG_ADDRESS);
   quietMode = EEPROM.read(QUIET_MODE_ADDRESS);
   escChar = EEPROM.read(ESC_CHAR_ADDRESS);
+  consoleMode = EEPROM.read(CONSOLE_MODE_ADDRESS);
+  byte sigMonVal = EEPROM.read(SIGNAL_MONITOR_ADDRESS);
+  signalMonitorEnabled = (sigMonVal == 1);
 
   for (int i = 0; i < 10; i++) {
     speedDials[i] = getEEPROM(speedDialAddresses[i], 50);
@@ -125,7 +134,7 @@ void defaultEEPROM() {
   EEPROM.write(VERBOSE_ADDRESS, 0x01);
   EEPROM.write(PET_TRANSLATE_ADDRESS, 0x00);
   EEPROM.write(FLOW_CONTROL_ADDRESS, 0x00);
-  EEPROM.write(PIN_POLARITY_ADDRESS, 0x01);
+  EEPROM.write(PIN_POLARITY_ADDRESS, 0x00); // P_INVERTED default (correct for MAX3232 level shifter)
   EEPROM.write(DTR_MODE_ADDRESS, 0x00);
   EEPROM.write(SERIALCONFIG_ADDRESS, 0x03); //8-N-1
 
@@ -147,6 +156,8 @@ void defaultEEPROM() {
   EEPROM.write(USB_DEBUG_ADDRESS, 0x01);  // USB debug enabled by default
   EEPROM.write(QUIET_MODE_ADDRESS, 0x00); // Quiet mode off by default
   EEPROM.write(ESC_CHAR_ADDRESS, '+');    // Default escape char is '+'
+  EEPROM.write(CONSOLE_MODE_ADDRESS, 0x01); // Console mode enabled by default
+  EEPROM.write(SIGNAL_MONITOR_ADDRESS, 0x00); // Signal monitor off by default
 
   // SLIP Gateway defaults (addresses 800-880)
   // Gateway IP: 192.168.7.1

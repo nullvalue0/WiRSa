@@ -15,7 +15,7 @@ extern WiFiClient tcpClient;
 extern String build;
 extern String ssid, password, busyMsg;
 extern byte serialSpeed, serialConfig;
-extern bool echo, autoAnswer, telnet, verboseResults, petTranslate;
+extern bool echo, autoAnswer, telnet, verboseResults, petTranslate, consoleMode;
 extern int tcpServerPort;
 extern byte flowControl, pinPolarity, dispOrientation, defaultMode;
 extern String speedDials[10];
@@ -157,6 +157,7 @@ void handleApiSettingsGet() {
   modem["autoAnswer"] = autoAnswer;
   modem["telnet"] = telnet;
   modem["petscii"] = petTranslate;
+  modem["consoleEnabled"] = consoleMode;
 
   // Flow control
   JsonObject flow = doc["flow"].to<JsonObject>();
@@ -246,6 +247,7 @@ void handleApiSettingsPost() {
     if (modem.containsKey("autoAnswer")) autoAnswer = modem["autoAnswer"];
     if (modem.containsKey("telnet")) telnet = modem["telnet"];
     if (modem.containsKey("petscii")) petTranslate = modem["petscii"];
+    if (modem.containsKey("consoleEnabled")) consoleMode = modem["consoleEnabled"];
   }
 
   // Update flow control
