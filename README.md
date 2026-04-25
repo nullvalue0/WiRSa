@@ -165,11 +165,11 @@ PPP is more robust with built-in negotiation, authentication support, and error 
 
 ### Entering SLIP/PPP Mode
 
-**From the WiRSa Menu:**
+**From the WiRSa Menu: (*if your host OS is expecting an "always on" connection*)**
 1. Navigate to "PPP Gateway" or "SLIP Gateway" from the main menu
 2. Select "Start Gateway"
 
-**Using AT Dial Commands (from Modem Mode):**
+**Using AT Dial Commands: (*must set the device to Modem Mode first*)**
 ```
 ATDT SLIP      - Enter SLIP mode
 ATDT 7547      - Enter SLIP mode (phone keypad for "SLIP")
@@ -178,7 +178,7 @@ ATDT PPP       - Enter PPP mode
 ATDT 777       - Enter PPP mode (phone keypad for "PPP")
 ```
 
-**Using AT Commands:**
+**Using AT Commands: (*must set the device to Modem Mode first*)**
 ```
 AT$SLIP        - Enter SLIP mode directly
 AT$PPP         - Enter PPP mode directly
@@ -296,6 +296,7 @@ TELNET bbs.example.com
 1. Go to Control Panel → Modems → Properties
 2. Set maximum speed to match WiRSa baud rate (115200 recommended, plus Flow Control enabled [AT&K1])
 3. Under "Connection" tab, set 8 data bits, No parity, 1 stop bit
+4. Make sure to put the WiRSa into Modem mode before proceeding
 
 **Step 4: Connect**
 1. Double-click the connection
@@ -327,7 +328,8 @@ TELNET bbs.example.com
 **Step 3: Connect**
 1. Open Remote Access
 2. Select your WiRSa entry
-3. Click "Dial"
+3. Make sure WiRSa is in Modem Mode
+4. Click "Dial"
 
 ### Setting Up SLIP Under Linux
 
