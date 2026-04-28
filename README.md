@@ -753,7 +753,7 @@ platformio device monitor
 
 The WiRSa originated as a film prop for Apple TV's "The Shining Girls," where it simulated realistic computer interaction by playing back pre-recorded text files while actors typed on vintage terminals.
 
-![WiRSa On Film](https://github.com/nullvalue0/WiRSa/blob/main/Pictures/2024-12-24T02_32_21.541Z-IMG_20241223_105522_2~2(1).jpg)
+![WiRSa On Film](https://github.com/nullvalue0/WiRSa/blob/main/Older%20Versions/V2/Pictures/readme_image4.jpg)
 
 ## Resources
 
