@@ -8,8 +8,7 @@ The WiRSa v3 is a WiFi-to-RS232 serial adapter designed for legacy computing sys
 
 ## Kits & assembled units available for sale
 If you prefer to save yourself some time, I have some units (fully assembled or kit) available for sale. I had quite a few PCB's made up and I am trying to keep these as cheap as possible. You can purchase on [SmallRun](https://smallrun.net/shop/retrodisks/wirsa-v3-wifi-rs232-serial-modem).
-
-[![WiRSa v3 Wifi RS232 Serial Modem with SD Reader, SLIP, PPP, Telnet on SmallRun](https://smallrun.net/brand/product-card.png?id=prod_3b2tq7cpve)](https://smallrun.net/shop/retrodisks/wirsa-v3-wifi-rs232-serial-modem?ref=card)
+[![WiRSa v3 Wifi RS232 Serial Modem with SD Reader, SLIP, PPP, Telnet on SmallRun](https://smallrun.net/brand/product-card.png?id=prod_3b2tq7cpve&ref=card)](https://smallrun.net/shop/retrodisks/wirsa-v3-wifi-rs232-serial-modem?ref=card)
 
 ## Features
 
